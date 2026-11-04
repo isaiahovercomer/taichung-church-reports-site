@@ -1,4 +1,4 @@
-// 共用排版模組：建置腳本（Node）與編輯器預覽／匯出（瀏覽器）都用這一份，保證預覽＝成品。
+// 共用排版模組：建置腳本（Node）與協作平台預覽／匯出（瀏覽器）都用這一份，保證預覽＝成品。
 // 不直接 import 套件；markdown-it 由呼叫端傳入（Node 用 npm 套件，瀏覽器用 vendor 版）。
 //
 // 安全原則：所有使用者欄位（標題、作者…）一律經 escapeHtml；
@@ -250,7 +250,6 @@ function renderHeader(root, current) {
   const nav = root == null
     ? ''
     : `<a href="${e(href(root, ''))}"${current === 'reports' ? ' aria-current="page"' : ''}>報導</a>` +
-      `<a href="${e(href(root, 'editor/'))}"${current === 'editor' ? ' aria-current="page"' : ''}>投稿編輯器</a>` +
       `<a href="${e(href(root, 'app/'))}"${current === 'app' ? ' aria-current="page"' : ''}>協作平台</a>`;
   const brand =
     `${LOGO_SVG}<span class="brand-text"><strong>${SITE_NAME}</strong><small>${SITE_NAME_EN}</small></span>`;
@@ -276,9 +275,6 @@ function renderFooter() {
 
 export const SITE_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'";
-// 編輯器：預覽用 srcdoc iframe（會繼承本政策），所以允許內嵌樣式與 data: 圖片；腳本仍只限本站檔案
-export const EDITOR_CSP =
-  "script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
 export const STANDALONE_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
 
 /**
@@ -338,7 +334,7 @@ export function renderPage(opts) {
 }
 
 /**
- * 單一 HTML 檔（CSS 內嵌、圖片以 data: 內嵌），編輯器預覽與「下載 HTML」共用。
+ * 單一 HTML 檔（CSS 內嵌、圖片以 data: 內嵌），協作平台預覽與匯出共用。
  * opts: { md, css, images: Map/物件 name→dataURL, siteUrl, layout: 'classic'|'alternate'|'columns' }
  */
 export function renderStandalone(report, opts) {
