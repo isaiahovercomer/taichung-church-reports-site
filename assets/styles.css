@@ -1117,6 +1117,51 @@ img {
   width: 100%;
 }
 
+/* 下拉選單：選項文字很長（例如「行動負責人（只能管自己被指派的行動）」）時不撐破 390px 版面 */
+.field select {
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.field input[type="file"] {
+  max-width: 100%;
+  font-size: 14px;
+}
+
+.field input[type="date"] {
+  min-width: 0;
+}
+
+/* 手機：輸入框字級至少 16px，iOS Safari 才不會在點選時自動放大畫面 */
+@media (max-width: 639px) {
+  .field input,
+  .field select,
+  .field textarea,
+  .material-form input,
+  .photo-item input:not([type]) {
+    font-size: 16px;
+  }
+}
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 16px;
+}
+
+.table-scroll .table {
+  min-width: 560px;
+  margin-bottom: 0;
+}
+
 .checkbox,
 .radio {
   display: flex;
@@ -1223,6 +1268,27 @@ fieldset.field {
   border-radius: 6px;
   padding: 6px 8px;
   min-width: 0;
+}
+
+/* 390px：縮圖＋主圖＋移除一列，圖說輸入框獨立一整列，不會擠到只剩幾個字寬 */
+@media (max-width: 479px) {
+  .photo-item {
+    grid-template-columns: 64px 1fr auto;
+    grid-template-areas: 'img radio del' 'cap cap cap';
+  }
+  .photo-item > img {
+    grid-area: img;
+  }
+  .photo-item > input {
+    grid-area: cap;
+    width: 100%;
+  }
+  .photo-item > .radio {
+    grid-area: radio;
+  }
+  .photo-item > .btn {
+    grid-area: del;
+  }
 }
 
 .video-list {

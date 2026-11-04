@@ -1,18 +1,18 @@
 // 行動報導協作平台（單頁應用，hash 路由）
 //   #/            我的行動（未登入時顯示 Email 驗證碼登入）
-//   #/new         建立行動（總管理者）
-//   #/admin       管理者名單與設定（總管理者）
-//   #/a/<id>[/materials|generate|outputs|settings]  行動報導協作頁
+//   #/new         建立行動（任何登入者；建立者就是負責人）
+//   #/admin       總管理者名單與設定（總管理者）
+//   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=d8bd729ee7';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=d8bd729ee7';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=d8bd729ee7';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=d8bd729ee7';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=d8bd729ee7';
-import { buildPdf } from '../report/pdf.mjs?v=d8bd729ee7';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=d8bd729ee7';
-import { createTour } from './tour.mjs?v=d8bd729ee7';
+import { ApiError, createApi, detectMode } from './api.mjs?v=cd677604a4';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=cd677604a4';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=cd677604a4';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=cd677604a4';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=cd677604a4';
+import { buildPdf } from '../report/pdf.mjs?v=cd677604a4';
+import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=cd677604a4';
+import { createTour } from './tour.mjs?v=cd677604a4';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -74,13 +74,22 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 const safeFileName = (s) => String(s || 'report').replace(/[\\/:*?"<>|\s]+/g, '-').slice(0, 60);
+/** 台北時間（UTC+8）：toISOString() 是 UTC，台灣清晨 8 點前會變成前一天 */
+const taipeiIso = (ms) => new Date(ms + 8 * 3600 * 1000).toISOString();
+const taipeiToday = () => taipeiIso(Date.now()).slice(0, 10);
+const taipeiTime = (iso) => {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? taipeiIso(ms).replace('T', ' ').slice(0, 16) : String(iso || '');
+};
+/** 我在這個行動的角色（後端 myRole）；比照報名系統的擁有者／共同管理者 */
+const ROLE_LABEL = { manager: '負責人', collaborator: '共同協作者', contributor: '開放投稿' };
 const go = (hash) => {
   if (location.hash === hash) route();
   else location.hash = hash;
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=d8bd729ee7', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=cd677604a4', import.meta.url))).text();
   return cssText;
 }
 
@@ -124,7 +133,7 @@ function renderBar() {
         'span',
         { class: 'app-user' },
         h('span', { 'data-testid': 'me-email', text: state.me.email }),
-        state.me.role === 'super' ? h('span', { class: 'role-badge', text: '總管理者' }) : state.me.role === 'event' ? h('span', { class: 'role-badge', text: '行動負責人' }) : null,
+        state.me.role === 'super' ? h('span', { class: 'role-badge', text: '總管理者' }) : null,
         h('button', { class: 'btn small', type: 'button', 'data-testid': 'tour-replay', onclick: () => tour.start(), text: '使用教學' }),
         h('button', { class: 'btn small', type: 'button', 'data-testid': 'logout', onclick: logout, text: '登出' }),
       )
@@ -141,6 +150,7 @@ async function logout() {
   api.setToken(null);
   state.me = null;
   state.photoCache.clear();
+  tour.reset();
   go('#/');
 }
 
@@ -179,7 +189,7 @@ async function route() {
   if (hash === '#/' || hash === '#') return renderHome();
   if (hash === '#/new') return renderActionForm(null);
   if (hash === '#/admin') return renderAdmin();
-  if ((m = /^#\/a\/([A-Za-z0-9_-]+)(?:\/(materials|generate|outputs|settings))?$/.exec(hash))) return renderAction(m[1], m[2] || 'materials');
+  if ((m = /^#\/a\/([A-Za-z0-9_-]+)(?:\/(materials|generate|outputs|members|settings))?$/.exec(hash))) return renderAction(m[1], m[2] || 'materials');
   fill(view, h('p', { text: '找不到這個頁面。' }), h('a', { href: '#/', text: '回首頁' }));
 }
 
@@ -221,7 +231,8 @@ function renderLogin() {
       api.setToken(r.token);
       state.me = null;
       demoBox.hidden = true;
-      go('#/');
+      // 協作者點負責人傳來的 #/a/<id> 連結再登入：登入後回到原本要去的行動
+      go(location.hash && location.hash !== '#' ? location.hash : '#/');
     } catch (e) {
       err.textContent = errorText(e);
       code.select();
@@ -232,7 +243,7 @@ function renderLogin() {
     }
   });
   fill(view, 
-    h('section', { class: 'panel login' }, h('h1', { class: 'page-title', text: '登入' }), h('p', { text: '台中市召會行動報導協作平台：管理者建立行動，協作者上傳報導與見證，一鍵生成網頁報導與 A4 圖檔。' }), emailForm, codeForm, err),
+    h('section', { class: 'panel login' }, h('h1', { class: 'page-title', text: '登入' }), h('p', { text: '台中市召會行動報導協作平台：任何人用 email 登入後都能建立自己的行動、邀請共同協作者上傳報導與見證，一鍵生成網頁報導與 A4 圖檔。' }), emailForm, codeForm, err),
   );
 }
 
@@ -247,9 +258,13 @@ async function renderHome() {
     return;
   }
   const isSuper = state.me.role === 'super';
-  const roleLabel = { manager: '負責人', collaborator: '協作者', contributor: '開放投稿' };
-  fill(view, 
-    h('div', { class: 'section-head' }, h('h1', { class: 'page-title', text: '我的行動' }), isSuper ? h('span', { class: 'actions' }, h('a', { class: 'btn primary', href: '#/new', text: '建立行動' }), h('a', { class: 'btn', href: '#/admin', text: '管理者名單' })) : null),
+  fill(view,
+    h(
+      'div',
+      { class: 'section-head' },
+      h('h1', { class: 'page-title', text: '我的行動' }),
+      h('span', { class: 'actions' }, h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' }), isSuper ? h('a', { class: 'btn', href: '#/admin', text: '總管理者名單' }) : null),
+    ),
     h('hr', { class: 'hairline' }),
     list.length
       ? h(
@@ -262,14 +277,20 @@ async function renderHome() {
               h(
                 'span',
                 { class: 'card-text' },
-                h('span', { class: 'card-cat', text: roleLabel[a.myRole] || '' }),
+                h('span', { class: 'card-cat', text: ROLE_LABEL[a.myRole] || '' }),
                 h('h2', { class: 'card-title', text: a.name }),
                 h('span', { class: 'card-date', text: `${formatDate(a.date)}${a.place ? `｜${a.place}` : ''}` }),
               ),
             ),
           ),
         )
-      : h('p', { class: 'empty', text: '目前沒有您可以參與的行動。若您是協作者，請確認負責人已把您的 email 加入名單。' }),
+      : h(
+          'div',
+          { class: 'empty', 'data-testid': 'empty-actions' },
+          h('p', { text: '您還沒有任何行動。按「建立新行動」開始，您就是這個行動的負責人，可以再邀請共同協作者一起上傳素材。' }),
+          h('p', { class: 'hint', text: '若您是受邀的協作者，請確認負責人已把您的 email 加入協作者名單。' }),
+          h('p', {}, h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' })),
+        ),
   );
 }
 
@@ -330,7 +351,7 @@ function settingsControls(initial) {
 // ---------- 建立／編輯行動 ----------
 function actionForm(action, onSubmit) {
   const isSuper = state.me.role === 'super';
-  const a = action || { name: '', date: new Date().toISOString().slice(0, 10), place: '', description: '', owners: [], collaborators: [], openSubmission: false, defaults: Core.PRESETS[1] };
+  const a = action || { name: '', date: taipeiToday(), place: '', description: '', owners: [], collaborators: [], openSubmission: false, defaults: Core.PRESETS[1] };
   const f = {
     name: h('input', { name: 'name', required: true, maxlength: 100, value: a.name }),
     date: h('input', { name: 'date', type: 'date', required: true, value: a.date }),
@@ -342,14 +363,21 @@ function actionForm(action, onSubmit) {
   };
   const settings = settingsControls(a.defaults);
   const err = h('p', { class: 'errors', role: 'alert' });
+  // 負責人：建立者自動成為負責人；只有總管理者可以在行動設定裡更換
+  const ownersField = action
+    ? isSuper
+      ? field('負責人 email（總管理者可更換，用逗號分隔）', f.owners)
+      : h('p', { class: 'hint', text: `負責人：${(a.owners || []).join('、')}` })
+    : h('p', { class: 'hint', 'data-testid': 'owner-note', text: `建立後您（${state.me.email}）就是這個行動的負責人。` });
   const form = h(
     'form',
     { class: 'panel action-form', 'data-testid': 'action-form' },
     field('行動名稱', f.name),
     h('div', { class: 'row-2' }, field('日期', f.date), field('地點', f.place)),
     field('說明', f.description),
-    field('負責人 email（行動負責人，可多個，用逗號分隔）', f.owners, action && !isSuper ? '只有總管理者可以更換負責人' : '負責人會自動成為「行動負責人」，只能管理被指派的行動'),
-    field('協作者 email 名單（一行一個或用逗號分隔）', f.collaborators, '名單上的人用 email 驗證碼登入後就能上傳素材'),
+    ownersField,
+    // 協作者：建立時可先填；建立後改到「協作者」頁籤逐一新增／移除
+    action ? null : field('共同協作者 email（選填，一行一個或用逗號分隔）', f.collaborators, '名單上的人用 email 驗證碼登入後就能上傳素材；建立後也可以到「協作者」頁籤增減'),
     h('label', { class: 'field checkbox' }, f.openSubmission, h('span', { text: '開放任何登入者投稿（預設關閉）' })),
     h('h2', { text: '報導預設設定' }),
     settings.el,
@@ -364,11 +392,11 @@ function actionForm(action, onSubmit) {
       date: f.date.value,
       place: f.place.value,
       description: f.description.value,
-      collaborators: f.collaborators.value,
       openSubmission: f.openSubmission.checked,
       defaults: settings.get(),
     };
-    if (!action || isSuper) data.owners = f.owners.value;
+    if (!action) data.collaborators = f.collaborators.value;
+    if (action && isSuper) data.owners = f.owners.value;
     try {
       await onSubmit(data);
     } catch (e) {
@@ -379,12 +407,8 @@ function actionForm(action, onSubmit) {
 }
 
 function renderActionForm() {
-  if (state.me.role !== 'super') {
-    fill(view, h('p', { class: 'errors', role: 'alert', text: '只有總管理者可以建立行動。' }));
-    return;
-  }
-  fill(view, 
-    h('h1', { class: 'page-title', text: '建立行動' }),
+  fill(view,
+    h('h1', { class: 'page-title', text: '建立新行動' }),
     h('hr', { class: 'hairline' }),
     actionForm(null, async (data) => {
       const r = await api.call('actions.create', data);
@@ -404,13 +428,17 @@ async function renderAdmin() {
   const body = h('div');
   const draw = (r) => {
     const email = h('input', { type: 'email', name: 'admin-email', required: true });
-    const role = h('select', { name: 'admin-role' }, h('option', { value: 'event', text: '行動負責人（只能管自己被指派的行動）' }), h('option', { value: 'super', text: '總管理者' }));
-    const add = h('form', { class: 'inline-form' }, field('新增管理者 email', email), field('角色', role), h('button', { class: 'btn primary', type: 'submit', text: '新增' }));
+    const add = h(
+      'form',
+      { class: 'inline-form' },
+      field('新增總管理者 email', email, '總管理者可以查看與管理所有行動。一般人不需要加入名單：登入後就能建立自己的行動。'),
+      h('button', { class: 'btn primary', type: 'submit', text: '新增' }),
+    );
     add.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       err.textContent = '';
       try {
-        draw(await api.call('admin.add', { email: email.value, role: role.value }));
+        draw(await api.call('admin.add', { email: email.value, role: 'super' }));
       } catch (e) {
         err.textContent = errorText(e);
       }
@@ -440,7 +468,7 @@ async function renderAdmin() {
               'tr',
               {},
               h('td', { text: a.email }),
-              h('td', { text: a.role === 'super' ? '總管理者' : '行動負責人' }),
+              h('td', { text: '總管理者' }),
               h(
                 'td',
                 {},
@@ -468,7 +496,7 @@ async function renderAdmin() {
       cfg,
     );
   };
-  fill(view, h('h1', { class: 'page-title', text: '管理者名單' }), h('hr', { class: 'hairline' }), err, body);
+  fill(view, h('h1', { class: 'page-title', text: '總管理者名單' }), h('hr', { class: 'hairline' }), err, body);
   try {
     draw(await api.call('admin.list'));
   } catch (e) {
@@ -496,8 +524,27 @@ async function renderAction(id, tab) {
     ['generate', '生成報導'],
     ['outputs', '產出紀錄'],
   ];
-  if (isManager) tabs.push(['settings', '行動設定']);
+  if (isManager) tabs.push(['members', '協作者'], ['settings', '行動設定']);
   const panel = h('div', { class: 'tab-panel' });
+  const leaveBtn =
+    action.myRole === 'collaborator'
+      ? h('button', {
+          class: 'btn small',
+          type: 'button',
+          'data-testid': 'leave-action',
+          text: '退出這個行動',
+          onclick: async () => {
+            if (!confirm(`確定退出「${action.name}」？您已上傳的素材會保留給負責人。`)) return;
+            try {
+              await api.call('actions.removeCollaborator', { actionId: id, email: state.me.email });
+              setStatus(`已退出「${action.name}」`);
+              go('#/');
+            } catch (e) {
+              setStatus(errorText(e), 'error');
+            }
+          },
+        })
+      : null;
   fill(view, 
     h('nav', { class: 'breadcrumb', 'aria-label': '麵包屑' }, h('a', { href: '#/', text: '我的行動' }), h('span', { class: 'sep', 'aria-hidden': 'true', text: '›' }), h('span', { text: action.name })),
     action.place ? h('p', { class: 'kicker', text: action.place }) : null,
@@ -507,10 +554,12 @@ async function renderAction(id, tab) {
       { class: 'meta' },
       h('div', { class: 'meta-item' }, h('dt', { text: '日期' }), h('dd', { text: formatDate(action.date) })),
       action.place ? h('div', { class: 'meta-item' }, h('dt', { text: '地點' }), h('dd', { text: action.place })) : null,
-      h('div', { class: 'meta-item' }, h('dt', { text: '我的角色' }), h('dd', { text: { manager: '負責人／管理者', collaborator: '協作者', contributor: '開放投稿' }[action.myRole] })),
+      h('div', { class: 'meta-item' }, h('dt', { text: '我的角色' }), h('dd', { 'data-testid': 'my-role', text: ROLE_LABEL[action.myRole] || '' })),
+      action.owners && !isManager ? h('div', { class: 'meta-item' }, h('dt', { text: '負責人' }), h('dd', { text: action.owners.join('、') })) : null,
       h('div', { class: 'meta-item' }, h('dt', { text: '素材' }), h('dd', { text: `${materials.length} 筆` })),
     ),
     action.description ? h('p', { class: 'action-desc', text: action.description }) : null,
+    leaveBtn,
     h(
       'div',
       { class: 'app-tabs', role: 'tablist' },
@@ -522,14 +571,96 @@ async function renderAction(id, tab) {
   if (tab === 'materials') renderMaterials(panel, action, materials, reload);
   else if (tab === 'generate') renderGenerate(panel, action, materials);
   else if (tab === 'outputs') renderOutputs(panel, action);
+  else if (tab === 'members' && isManager) renderMembers(panel, action);
   else if (tab === 'settings' && isManager)
     panel.append(
       actionForm(action, async (data) => {
-        await api.call('actions.update', { ...data, id });
+        // 一併送出目前的協作者名單：舊版後端（version 1）沒送就會清空名單；新版收到相同名單不影響
+        await api.call('actions.update', { ...data, id, collaborators: action.collaborators || [] });
         setStatus('已儲存行動設定');
         reload();
       }),
     );
+}
+
+// ---------- 協作者（負責人新增／移除共同協作者） ----------
+function renderMembers(panel, action) {
+  const err = h('p', { class: 'errors', role: 'alert' });
+  const body = h('div');
+  const draw = (a) => {
+    const email = h('input', { type: 'email', name: 'collaborator-email', required: true, autocomplete: 'off', placeholder: 'name@example.com' });
+    const add = h(
+      'form',
+      { class: 'inline-form', 'data-testid': 'add-collaborator' },
+      field('新增共同協作者 email', email, '對方用這個 email 收驗證碼登入後，「我的行動」就會出現這個行動，可以上傳並編輯自己的素材。'),
+      h('button', { class: 'btn primary', type: 'submit', text: '新增' }),
+    );
+    add.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      err.textContent = '';
+      try {
+        const r = await api.call('actions.addCollaborator', { actionId: a.id, email: email.value });
+        setStatus(`已新增協作者 ${Core.normalizeEmail(email.value)}`);
+        draw(r.action);
+      } catch (e) {
+        err.textContent = errorText(e);
+      }
+    });
+    const rows = [
+      ...(a.owners || []).map((e) => ({ email: e, owner: true })),
+      ...(a.collaborators || []).map((e) => ({ email: e, owner: false })),
+    ];
+    fill(body,
+      add,
+      h(
+        'div',
+        { class: 'table-scroll' },
+        h(
+          'table',
+          { class: 'table', 'data-testid': 'members-table' },
+          h('thead', {}, h('tr', {}, h('th', { text: 'Email' }), h('th', { text: '權限' }), h('th', { text: '' }))),
+          h(
+            'tbody',
+            {},
+            rows.map((r) =>
+              h(
+                'tr',
+                {},
+                h('td', { text: r.email }),
+                h('td', { text: r.owner ? '負責人（管理行動與協作者）' : '共同協作者（上傳、編輯自己的素材）' }),
+                h(
+                  'td',
+                  {},
+                  r.owner
+                    ? h('span', { class: 'hint', text: '負責人' })
+                    : h('button', {
+                        class: 'btn small danger',
+                        type: 'button',
+                        text: '移除',
+                        'aria-label': `移除 ${r.email}`,
+                        onclick: async () => {
+                          if (!confirm(`確定移除協作者 ${r.email}？對方已上傳的素材會保留。`)) return;
+                          err.textContent = '';
+                          try {
+                            draw((await api.call('actions.removeCollaborator', { actionId: a.id, email: r.email })).action);
+                            setStatus(`已移除協作者 ${r.email}`);
+                          } catch (e) {
+                            err.textContent = errorText(e);
+                          }
+                        },
+                      }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      a.collaborators && a.collaborators.length ? null : h('p', { class: 'empty', text: '還沒有共同協作者。輸入對方的 email 按「新增」，再把這個行動的網址傳給對方。' }),
+      h('p', { class: 'hint' }, '行動網址：', h('code', { 'data-testid': 'action-link', text: `${location.origin}${location.pathname}${location.search}#/a/${a.id}` })),
+    );
+  };
+  fill(panel, err, body);
+  draw(action);
 }
 
 // ---------- 素材 ----------
@@ -582,7 +713,17 @@ function renderMaterials(panel, action, materials, reload) {
           img,
           cap,
           h('label', { class: 'radio' }, cover, '主圖'),
-          h('button', { class: 'btn small danger', type: 'button', text: '移除', onclick: () => (form.photos.splice(i, 1), drawPhotos()) }),
+          h('button', {
+            class: 'btn small danger',
+            type: 'button',
+            text: '移除',
+            onclick: () => {
+              const [gone] = form.photos.splice(i, 1);
+              // 移除的是主圖：改由第一張當主圖
+              if (gone && gone.cover && form.photos.length) form.photos[0].cover = true;
+              drawPhotos();
+            },
+          }),
         );
       }),
     );
@@ -806,6 +947,18 @@ function renderGenerate(panel, action, materials) {
   const a4Pages = h('div', { class: 'a4-pages', 'data-testid': 'a4-pages' });
   let last = null; // { html, comp, settings }
   let lastA4 = null;
+  // 改了設定、素材勾選或節錄方式後，「下載 HTML／存回後端／下載 PDF」要重新生成，不能沿用舊結果
+  const invalidate = () => {
+    last = null;
+    lastA4 = null;
+  };
+  for (const el of [settings.el, picks, sumSelect]) {
+    el.addEventListener('input', invalidate);
+    el.addEventListener('change', invalidate);
+  }
+  settings.el.addEventListener('click', (ev) => {
+    if (ev.target.closest('[data-preset]')) invalidate();
+  });
 
   const selected = () => {
     const ids = [...picks.querySelectorAll('input:checked')].map((i) => i.value);
@@ -930,22 +1083,26 @@ async function renderOutputs(panel, action) {
     fill(panel, 
       list.length
         ? h(
-            'table',
-            { class: 'table', 'data-testid': 'outputs-table' },
-            h('thead', {}, h('tr', {}, ['時間', '標題', '設定', '字數', '照片', '建立者'].map((t) => h('th', { text: t })))),
+            'div',
+            { class: 'table-scroll' },
             h(
-              'tbody',
-              {},
-              list.map((o) =>
-                h(
-                  'tr',
-                  {},
-                  h('td', { text: o.createdAt.replace('T', ' ').slice(0, 16) }),
-                  h('td', { text: o.title }),
-                  h('td', { text: `${o.settings.words}字／${o.settings.maxPhotos}圖／${o.settings.pages}頁／${layoutNames[o.settings.layout] || ''}` }),
-                  h('td', { text: String(o.chars) }),
-                  h('td', { text: String(o.photos) }),
-                  h('td', { text: o.createdBy }),
+              'table',
+              { class: 'table', 'data-testid': 'outputs-table' },
+              h('thead', {}, h('tr', {}, ['時間', '標題', '設定', '字數', '照片', '建立者'].map((t) => h('th', { text: t })))),
+              h(
+                'tbody',
+                {},
+                list.map((o) =>
+                  h(
+                    'tr',
+                    {},
+                    h('td', { text: taipeiTime(o.createdAt) }),
+                    h('td', { text: o.title }),
+                    h('td', { text: `${o.settings.words}字／${o.settings.maxPhotos}圖／${o.settings.pages}頁／${layoutNames[o.settings.layout] || ''}` }),
+                    h('td', { text: String(o.chars) }),
+                    h('td', { text: String(o.photos) }),
+                    h('td', { text: o.createdBy }),
+                  ),
                 ),
               ),
             ),

@@ -5,7 +5,7 @@
 // POST 一律用 Content-Type: text/plain（Apps Script 不支援 CORS 預檢），token 放在 body 裡。
 // localStorage 只存 session token（rpt.session.<mode>）；草稿文字由 main.mjs 另外存。
 
-import { createMemoryEnv } from '../backend/memory-env.mjs?v=d8bd729ee7';
+import { createMemoryEnv } from '../backend/memory-env.mjs?v=cd677604a4';
 
 export class ApiError extends Error {
   constructor(code, message) {
@@ -43,7 +43,8 @@ export function createApi({ mode, config, onDemoMail }) {
   let demo = null;
   if (mode === 'demo') {
     demo = createMemoryEnv({
-      deployer: 'demo@example.com',
+      // 示範帳號是一般使用者（不是總管理者）：展示「任何人登入後都能建立自己的行動」
+      deployer: '',
       sendMail: (to, subject, body) => onDemoMail && onDemoMail(to, (/(\d{6})/.exec(body) || [])[1]),
     });
   }

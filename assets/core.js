@@ -25,6 +25,7 @@ var RptCore = (function () {
   'use strict';
 
   // ---------- 常數 ----------
+  var RPT_VERSION_ = 2;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -39,7 +40,8 @@ var RptCore = (function () {
     sessionMaxPerEmail: 10,
     photoMaxBytes: Math.floor(1.5 * 1024 * 1024),
     videoMaxMbDefault: 200,
-    outputMaxChars: 20 * 1024 * 1024
+    outputMaxChars: 20 * 1024 * 1024,
+    actionsPerUserPerDay: 20
   };
   var RPT_P_ = {
     pepper: 'RPT_PEPPER',
@@ -50,6 +52,7 @@ var RptCore = (function () {
     videoMaxMb: 'RPT_VIDEO_MAX_MB'
   };
   var RPT_CELL_MAX_ = 40000;
+  var RPT_MAX_COLLABORATORS_ = 300;
   var RPT_VIDEO_HOSTS_ = ['www.youtube.com', 'youtube.com', 'm.youtube.com', 'youtu.be', 'drive.google.com'];
   var RPT_LAYOUTS_ = ['classic', 'alternate', 'columns'];
   var RPT_PRESETS_ = [
@@ -546,12 +549,15 @@ var RptCore = (function () {
     for (i = 0; i < list.length; i++) if (list[i].role === 'super' && !arrayIncludes_(out, list[i].email)) out.push(list[i].email);
     return out;
   }
+  /**
+   * 全站角色只有兩種：總管理者（super）與一般使用者（user）。
+   * 比照報名系統：任何人登入後都能建立自己的行動、成為該行動的負責人（擁有者），不需管理員事先允許；
+   * 「負責人／協作者」是每個行動各自的權限（見下方「權限」與 myRole_）。舊版的 'event'（行動負責人）名單不再使用。
+   */
   function roleOf_(env, email) {
     if (!email) return 'none';
     if (arrayIncludes_(superEmails_(env), email)) return 'super';
-    var list = adminList_(env);
-    for (var i = 0; i < list.length; i++) if (list[i].email === email && list[i].role === 'event') return 'event';
-    return 'none';
+    return 'user';
   }
   function isLockedSuper_(env, email) {
     var dep = normalizeEmail(env.deployerEmail ? env.deployerEmail() : '');
@@ -573,11 +579,13 @@ var RptCore = (function () {
       setPropJson_(env, RPT_P_.admins, list);
     });
   }
-  function ensureEventAdmins_(env, emails, by) {
-    for (var i = 0; i < emails.length; i++) if (roleOf_(env, emails[i]) === 'none') upsertAdmin_(env, emails[i], 'event', by);
-  }
-
   // ---------- 權限 ----------
+  // 每個行動的權限分級（比照報名系統的「擁有者／共同管理者」）：
+  //   負責人（owner，建立者）：修改行動設定、新增／移除共同協作者、編輯／刪除任何素材、生成並存回報導
+  //   共同協作者（collaborator）：查看行動與所有素材、上傳並編輯／刪除自己的素材、生成並存回報導、退出行動；
+  //                               不能改行動設定、不能增減協作者
+  //   開放投稿（contributor）：只能上傳並編輯自己的素材
+  //   總管理者（super）：所有行動都視同負責人，另可更換負責人
   function ctxOf_(env, token) {
     var email = sessionEmail_(env, token);
     if (!email) fail_('AUTH_REQUIRED', '請先登入（登入可能已過期）');
@@ -586,9 +594,11 @@ var RptCore = (function () {
   function requireSuper_(ctx) {
     if (ctx.role !== 'super') fail_('FORBIDDEN', '只有總管理者可以進行這個操作');
   }
+  function isOwner_(ctx, action) {
+    return arrayIncludes_(action.owners || [], ctx.email);
+  }
   function canManage_(ctx, action) {
-    if (ctx.role === 'super') return true;
-    return ctx.role === 'event' && arrayIncludes_(action.owners || [], ctx.email);
+    return ctx.role === 'super' || isOwner_(ctx, action);
   }
   function isCollaborator_(ctx, action) {
     return arrayIncludes_(action.collaborators || [], ctx.email);
@@ -626,9 +636,12 @@ var RptCore = (function () {
       createdAt: a.createdAt,
       updatedAt: a.updatedAt
     };
+    // 負責人看得到完整名單；共同協作者只看得到負責人是誰（方便聯絡）；開放投稿者都看不到
     if (out.myRole === 'manager') {
       out.owners = (a.owners || []).slice();
       out.collaborators = (a.collaborators || []).slice();
+    } else if (out.myRole === 'collaborator') {
+      out.owners = (a.owners || []).slice();
     }
     return out;
   }
@@ -637,6 +650,12 @@ var RptCore = (function () {
   function newId_(env, prefix) {
     return prefix + new Date(env.now()).toISOString().slice(0, 10).replace(/-/g, '') + '-' + env.randomHex(5);
   }
+  /** 協作者名單：去掉負責人本人（負責人已有全部權限，不必重複列為協作者） */
+  function collaboratorsFor_(list, owners) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) if (!arrayIncludes_(owners, list[i])) out.push(list[i]);
+    return out;
+  }
   function actionFields_(data, isCreate, canChangeOwners) {
     var out = {};
     out.name = str_(data.name, '行動名稱', 100, true);
@@ -644,18 +663,32 @@ var RptCore = (function () {
     if (!isValidDate_(out.date)) fail_('BAD_INPUT', '日期格式需為 YYYY-MM-DD');
     out.place = str_(data.place, '地點', 100, false);
     out.description = str_(data.description, '說明', 2000, false);
-    if (isCreate || (canChangeOwners && (data.owners != null || data.ownerEmail != null))) {
+    // 一般使用者送來的 owners 一律忽略（建立者就是負責人）；只有總管理者可以指定或更換負責人
+    if (canChangeOwners && (data.owners != null || data.ownerEmail != null)) {
       out.owners = emailList_(data.owners != null ? data.owners : data.ownerEmail, '負責人 email', 5);
       if (!out.owners.length) fail_('BAD_INPUT', '請填寫負責人 email');
     }
-    out.collaborators = emailList_(data.collaborators, '協作者 email', 300);
+    // 修改時沒送 collaborators 就維持原名單（協作者改用 actions.addCollaborator／removeCollaborator 增減）
+    if (isCreate || data.collaborators != null) out.collaborators = emailList_(data.collaborators, '協作者 email', RPT_MAX_COLLABORATORS_);
     out.openSubmission = data.openSubmission === true;
     out.defaults = normalizeSettings(data.defaults);
     return out;
   }
+  /** 一般使用者每天（台北日）最多建立幾個行動：任何人都能建立，避免被大量灌入 */
+  function checkCreateQuota_(env, ctx) {
+    if (ctx.role === 'super') return;
+    var today = taipeiDay_(env.now());
+    var all = env.store.listActions();
+    var n = 0;
+    for (var i = 0; i < all.length; i++) {
+      var t = Date.parse(all[i].createdAt);
+      if (all[i].createdBy === ctx.email && t && taipeiDay_(t) === today) n++;
+    }
+    if (n >= limits_(env).actionsPerUserPerDay) fail_('RATE_LIMITED', '今天建立的行動已達上限（' + limits_(env).actionsPerUserPerDay + ' 個），請明天再建立');
+  }
   function createAction_(env, ctx, data) {
-    requireSuper_(ctx);
-    var f = actionFields_(data || {}, true, true);
+    var f = actionFields_(data || {}, true, ctx.role === 'super');
+    var owners = f.owners || [ctx.email];
     var now = new Date(env.now()).toISOString();
     var a = {
       id: newId_(env, 'a'),
@@ -663,8 +696,8 @@ var RptCore = (function () {
       date: f.date,
       place: f.place,
       description: f.description,
-      owners: f.owners,
-      collaborators: f.collaborators,
+      owners: owners,
+      collaborators: collaboratorsFor_(f.collaborators, owners),
       openSubmission: f.openSubmission,
       defaults: f.defaults,
       createdBy: ctx.email,
@@ -672,29 +705,65 @@ var RptCore = (function () {
       updatedAt: now
     };
     env.withLock(function () {
+      checkCreateQuota_(env, ctx);
       env.store.createAction(a);
     });
-    ensureEventAdmins_(env, a.owners, ctx.email);
     return { action: publicAction_(ctx, a) };
   }
   function updateAction_(env, ctx, data) {
     var a = loadAction_(env, ctx, data && data.id);
-    if (!canManage_(ctx, a)) fail_('FORBIDDEN', '只有這個行動的負責人或總管理者可以修改');
+    if (!canManage_(ctx, a)) fail_('FORBIDDEN', '只有這個行動的負責人可以修改行動設定');
     var f = actionFields_(data, false, ctx.role === 'super');
     a.name = f.name;
     a.date = f.date;
     a.place = f.place;
     a.description = f.description;
     if (f.owners) a.owners = f.owners;
-    a.collaborators = f.collaborators;
+    a.collaborators = collaboratorsFor_(f.collaborators || a.collaborators || [], a.owners);
     a.openSubmission = f.openSubmission;
     a.defaults = f.defaults;
     a.updatedAt = new Date(env.now()).toISOString();
     env.withLock(function () {
       env.store.updateAction(a);
     });
-    if (f.owners) ensureEventAdmins_(env, a.owners, ctx.email);
     return { action: publicAction_(ctx, a) };
+  }
+  /** 負責人新增共同協作者（email）；回傳更新後的行動 */
+  function addCollaborator_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    if (!canManage_(ctx, a)) fail_('FORBIDDEN', '只有這個行動的負責人可以新增協作者');
+    var email = requireEmail_(data.email, '協作者 email');
+    if (arrayIncludes_(a.owners || [], email)) fail_('BAD_INPUT', '這個 email 已經是負責人');
+    env.withLock(function () {
+      a = env.store.getAction(a.id) || a; // 在鎖內重讀，避免同時增減時蓋掉別人的變更
+      var list = (a.collaborators || []).slice();
+      if (!arrayIncludes_(list, email)) {
+        if (list.length >= RPT_MAX_COLLABORATORS_) fail_('BAD_INPUT', '協作者最多 ' + RPT_MAX_COLLABORATORS_ + ' 位');
+        list.push(email);
+      }
+      a.collaborators = list;
+      a.updatedAt = new Date(env.now()).toISOString();
+      env.store.updateAction(a);
+    });
+    return { action: publicAction_(ctx, a) };
+  }
+  /** 負責人移除共同協作者；協作者也可以把自己移除（退出行動）。已上傳的素材保留，由負責人決定是否刪除。 */
+  function removeCollaborator_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    var email = requireEmail_(data.email, '協作者 email');
+    if (!canManage_(ctx, a) && email !== ctx.email) fail_('FORBIDDEN', '只有這個行動的負責人可以移除協作者');
+    if (arrayIncludes_(a.owners || [], email)) fail_('BAD_INPUT', '負責人不能被移除');
+    env.withLock(function () {
+      a = env.store.getAction(a.id) || a;
+      var keep = [];
+      for (var i = 0; i < (a.collaborators || []).length; i++) if (a.collaborators[i] !== email) keep.push(a.collaborators[i]);
+      a.collaborators = keep;
+      a.updatedAt = new Date(env.now()).toISOString();
+      env.store.updateAction(a);
+    });
+    return { action: canView_(ctx, a) ? publicAction_(ctx, a) : null, left: email === ctx.email };
   }
   function listActions_(env, ctx) {
     var all = env.store.listActions();
@@ -942,23 +1011,20 @@ var RptCore = (function () {
   }
 
   // ---------- 管理者 ----------
+  /** 總管理者名單（舊版的 'event' 行動負責人已不需要：任何人登入後都能建立自己的行動） */
   function listAdmins_(env, ctx) {
     requireSuper_(ctx);
     var supers = superEmails_(env);
-    var list = adminList_(env);
     var out = [];
-    var i;
-    for (i = 0; i < supers.length; i++) out.push({ email: supers[i], role: 'super', locked: isLockedSuper_(env, supers[i]) });
-    for (i = 0; i < list.length; i++) if (list[i].role === 'event') out.push({ email: list[i].email, role: 'event', locked: false });
+    for (var i = 0; i < supers.length; i++) out.push({ email: supers[i], role: 'super', locked: isLockedSuper_(env, supers[i]) });
     return { admins: out, videoMaxMb: videoMaxMb_(env) };
   }
   function addAdmin_(env, ctx, data) {
     requireSuper_(ctx);
     var email = requireEmail_(data && data.email);
-    var role = data.role === 'super' ? 'super' : data.role === 'event' ? 'event' : fail_('BAD_INPUT', '角色只能是 super 或 event');
+    if (data.role != null && data.role !== 'super') fail_('BAD_INPUT', '不需要指派行動負責人：任何人登入後都能建立自己的行動');
     if (isLockedSuper_(env, email)) fail_('BAD_INPUT', '這個帳號是固定的總管理者');
-    if (role !== 'super' && email === ctx.email) fail_('BAD_INPUT', '不能把自己改成行動負責人；請其他總管理者調整');
-    upsertAdmin_(env, email, role, ctx.email);
+    upsertAdmin_(env, email, 'super', ctx.email);
     return listAdmins_(env, ctx);
   }
   function removeAdmin_(env, ctx, data) {
@@ -987,6 +1053,8 @@ var RptCore = (function () {
     'actions.list': listActions_,
     'actions.create': createAction_,
     'actions.update': updateAction_,
+    'actions.addCollaborator': addCollaborator_,
+    'actions.removeCollaborator': removeCollaborator_,
     'materials.list': listMaterials_,
     'materials.save': saveMaterial_,
     'materials.delete': deleteMaterial_,
@@ -1013,7 +1081,8 @@ var RptCore = (function () {
       var action = body.action;
       var data = body.data && typeof body.data === 'object' ? body.data : {};
       var res;
-      if (action === 'ping') res = { service: 'taichung-reports', version: 1 };
+      // version 2：任何人可建立行動＋共同協作者（打開 /exec 網址即可確認後端已更新）
+      if (action === 'ping') res = { service: 'taichung-reports', version: RPT_VERSION_ };
       else if (action === 'auth.requestCode') res = requestCode_(env, data);
       else if (action === 'auth.verifyCode') res = verifyCode_(env, data);
       else if (action === 'auth.logout') res = logout_(env, body.token);
@@ -1033,7 +1102,7 @@ var RptCore = (function () {
   }
 
   return {
-    VERSION: 1,
+    VERSION: RPT_VERSION_,
     ADMIN_SEED_EMAILS: RPT_ADMIN_SEED_EMAILS_,
     MAIL_SUBJECT: RPT_MAIL_SUBJECT_,
     PRESETS: RPT_PRESETS_,

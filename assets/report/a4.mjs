@@ -2,8 +2,8 @@
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=d8bd729ee7';
-import { LOGO_DATA_URL } from '../brand.mjs?v=d8bd729ee7';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=cd677604a4';
+import { LOGO_DATA_URL } from '../brand.mjs?v=cd677604a4';
 
 let logoPromise = null;
 /** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
