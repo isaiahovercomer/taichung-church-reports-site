@@ -5,13 +5,14 @@
 //   #/a/<id>[/materials|generate|outputs|settings]  行動報導協作頁
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=9a18fbf016';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=9a18fbf016';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=9a18fbf016';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=9a18fbf016';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=9a18fbf016';
-import { buildPdf } from '../report/pdf.mjs?v=9a18fbf016';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=9a18fbf016';
+import { ApiError, createApi, detectMode } from './api.mjs?v=970ad7e4e1';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=970ad7e4e1';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=970ad7e4e1';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=970ad7e4e1';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=970ad7e4e1';
+import { buildPdf } from '../report/pdf.mjs?v=970ad7e4e1';
+import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=970ad7e4e1';
+import { createTour } from './tour.mjs?v=970ad7e4e1';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -21,6 +22,15 @@ const md = createMarkdown(globalThis.markdownit);
 const Core = globalThis.RptCore;
 const api = createApi({ mode, config, onDemoMail: (to, code) => showDemoCode(to, code) });
 const state = { me: null, photoCache: new Map() };
+const tour = createTour({
+  api,
+  mode,
+  getMe: () => state.me,
+  go: (hash) => go(hash),
+  // 示範模式每個分頁都從頭播放；正式使用記在這台裝置
+  storage: mode === 'demo' ? sessionStorage : localStorage,
+  defaults: globalThis.RptCore?.PRESETS?.[1],
+});
 let cssText = null;
 let uid = 0;
 
@@ -70,7 +80,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=9a18fbf016', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=970ad7e4e1', import.meta.url))).text();
   return cssText;
 }
 
@@ -115,6 +125,7 @@ function renderBar() {
         { class: 'app-user' },
         h('span', { 'data-testid': 'me-email', text: state.me.email }),
         state.me.role === 'super' ? h('span', { class: 'role-badge', text: '總管理者' }) : state.me.role === 'event' ? h('span', { class: 'role-badge', text: '行動負責人' }) : null,
+        h('button', { class: 'btn small', type: 'button', 'data-testid': 'tour-replay', onclick: () => tour.start(), text: '使用教學' }),
         h('button', { class: 'btn small', type: 'button', 'data-testid': 'logout', onclick: logout, text: '登出' }),
       )
     : null;
@@ -162,6 +173,7 @@ async function route() {
     }
   }
   renderBar();
+  tour.maybeStart();
   const hash = location.hash || '#/';
   let m;
   if (hash === '#/' || hash === '#') return renderHome();

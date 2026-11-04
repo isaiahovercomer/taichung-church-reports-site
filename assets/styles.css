@@ -1340,3 +1340,134 @@ progress {
 .inline-form > .btn {
   margin-bottom: 14px;
 }
+
+/* ---------- 使用教學（導覽）：深藍／金色、高對比 ---------- */
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+.tour-blocker {
+  position: fixed;
+  inset: 0;
+}
+.tour-root.no-target .tour-blocker {
+  background: rgba(6, 16, 30, 0.78);
+}
+.tour-hole {
+  position: fixed;
+  border: 3px solid #c9a865;
+  border-radius: 10px;
+  box-shadow: 0 0 0 200vmax rgba(6, 16, 30, 0.78), 0 0 0 6px rgba(201, 168, 101, 0.35);
+  pointer-events: none;
+  transition: left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+.tour-bubble {
+  position: fixed;
+  box-sizing: border-box;
+  width: 380px;
+  padding: 16px 18px 14px;
+  background: #16324f;
+  color: #ffffff;
+  border: 2px solid #c9a865;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  line-height: 1.7;
+  outline: none;
+}
+.tour-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.tour-count {
+  color: #e6cf98;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.tour-title {
+  margin: 0 0 6px;
+  color: #e6cf98;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+.tour-text {
+  margin: 0;
+  font-size: 16px;
+  color: #ffffff;
+}
+.tour-note {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: #e6cf98;
+}
+.tour-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+.tour-btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tour-btn.primary {
+  background: #c9a865;
+  border-color: #c9a865;
+  color: #0d2136;
+}
+.tour-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tour-btn:focus-visible,
+.tour-skip:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 2px;
+}
+.tour-skip {
+  min-height: 44px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.tour-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  padding: 10px 14px;
+  background: #16324f;
+  color: #ffffff;
+  border: 2px solid #c9a865;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-hole {
+    transition: none;
+  }
+}
