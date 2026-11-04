@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000">
+  <rect width="1600" height="1000" fill="#2F6FB2"/>
+  <circle cx="1320" cy="220" r="260" fill="#ffffff" opacity="0.08"/>
+  <circle cx="260" cy="860" r="340" fill="#ffffff" opacity="0.06"/>
+  <rect x="80" y="80" width="1440" height="840" fill="none" stroke="#C9A865" stroke-width="4" opacity="0.7"/>
+  <text x="800" y="500" text-anchor="middle" font-family="sans-serif" font-size="150" font-weight="700" fill="#ffffff">範例圖片</text>
+  <text x="800" y="600" text-anchor="middle" font-family="sans-serif" font-size="44" letter-spacing="8" fill="#F0EDE6">SAMPLE IMAGE · 1</text>
+</svg>
