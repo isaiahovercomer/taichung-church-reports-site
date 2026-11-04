@@ -5,6 +5,7 @@
 // 內文只經 markdown-it（html:false），圖片只接受安全檔名，連結只接受 https/http/mailto/相對路徑。
 
 import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs';
+import { LOGO_DATA_URL } from './brand.mjs';
 
 export const SITE_NAME = '台中市召會';
 export const SITE_NAME_EN = 'THE CHURCH IN TAICHUNG';
@@ -117,12 +118,8 @@ export function renderBody(md, markdown, env = {}) {
 
 // ---------- 版面元件 ----------
 
-export const LOGO_SVG =
-  '<svg class="logo" viewBox="0 0 48 48" width="40" height="40" aria-hidden="true" focusable="false">' +
-  '<circle cx="24" cy="24" r="22.5" fill="#16324F" stroke="#C9A865" stroke-width="2"/>' +
-  '<circle cx="24" cy="24" r="17" fill="none" stroke="#C9A865" stroke-width="0.8" opacity="0.7"/>' +
-  '<path d="M24 11v26M15 20h18" stroke="#C9A865" stroke-width="3" stroke-linecap="round"/>' +
-  '</svg>';
+// 台中市召會標誌（深色版，見 src/brand.mjs）；名稱沿用 LOGO_SVG 以免影響既有呼叫端
+export const LOGO_SVG = `<img class="logo" src="${LOGO_DATA_URL}" width="40" height="40" alt="">`;
 
 function link(href, text, attrs = '') {
   return href == null ? `<span${attrs}>${text}</span>` : `<a href="${e(href)}"${attrs}>${text}</a>`;
@@ -312,6 +309,15 @@ export function renderPage(opts) {
     opts.css != null
       ? `<style>${String(opts.css).replace(/<\/style/gi, '<\\/style')}</style>`
       : `<link rel="stylesheet" href="${e(assetRoot === '' ? './' : assetRoot)}assets/styles.css">`,
+    ...(opts.css != null
+      ? [`<link rel="icon" type="image/png" href="${LOGO_DATA_URL}">`]
+      : [
+          `<link rel="icon" href="${e(assetRoot === '' ? './' : assetRoot)}favicon.ico" sizes="any">`,
+          `<link rel="icon" type="image/png" sizes="32x32" href="${e(assetRoot === '' ? './' : assetRoot)}assets/brand/logo-32.png">`,
+          `<link rel="apple-touch-icon" href="${e(assetRoot === '' ? './' : assetRoot)}assets/brand/apple-touch-icon.png">`,
+          `<link rel="manifest" href="${e(assetRoot === '' ? './' : assetRoot)}manifest.webmanifest">`,
+          `<meta name="theme-color" content="#16324F">`,
+        ]),
   ]
     .filter(Boolean)
     .join('\n');

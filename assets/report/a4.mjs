@@ -3,6 +3,22 @@
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
 import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs';
+import { LOGO_DATA_URL } from '../brand.mjs';
+
+let logoPromise = null;
+/** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
+function loadLogo() {
+  if (!logoPromise) {
+    logoPromise = new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = LOGO_DATA_URL;
+    });
+  }
+  return logoPromise;
+}
+let logoImg = null;
 
 export const FULL_TEXT_NOTE = '（篇幅所限，以上為節錄，全文見網頁版）';
 const SCALES = [1, 0.93, 0.86, 0.8, 0.74, 0.68, 0.62];
@@ -49,13 +65,15 @@ function drawChrome(ctx, index, total, title) {
     ctx.fillRect(0, 0, W, 132);
     ctx.fillStyle = COLORS.goldLight;
     ctx.fillRect(0, 132, W, 5);
-    ctx.beginPath();
-    ctx.arc(140, 66, 36, 0, Math.PI * 2);
-    ctx.strokeStyle = COLORS.goldLight;
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.fillRect(136, 44, 8, 44);
-    ctx.fillRect(122, 58, 36, 8);
+    if (logoImg) {
+      ctx.drawImage(logoImg, 100, 22, 88, 88);
+    } else {
+      ctx.beginPath();
+      ctx.arc(140, 66, 36, 0, Math.PI * 2);
+      ctx.strokeStyle = COLORS.goldLight;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
     ctx.fillStyle = '#fff';
     ctx.font = font(36, 900);
     ctx.textAlign = 'left';
@@ -147,6 +165,7 @@ export async function renderA4(opts) {
   const { settings } = opts;
   const target = settings.pages;
   const images = new Map();
+  logoImg = await loadLogo();
   const ensureImages = async (comp) => {
     for (const id of photoIdsOf(comp)) if (!images.has(id)) images.set(id, await opts.loadImage(id));
   };
