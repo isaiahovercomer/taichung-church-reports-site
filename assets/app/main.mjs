@@ -5,14 +5,14 @@
 //   #/a/<id>[/materials|generate|outputs|settings]  行動報導協作頁
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=970ad7e4e1';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=970ad7e4e1';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=970ad7e4e1';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=970ad7e4e1';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=970ad7e4e1';
-import { buildPdf } from '../report/pdf.mjs?v=970ad7e4e1';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=970ad7e4e1';
-import { createTour } from './tour.mjs?v=970ad7e4e1';
+import { ApiError, createApi, detectMode } from './api.mjs?v=d8bd729ee7';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=d8bd729ee7';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=d8bd729ee7';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=d8bd729ee7';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=d8bd729ee7';
+import { buildPdf } from '../report/pdf.mjs?v=d8bd729ee7';
+import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=d8bd729ee7';
+import { createTour } from './tour.mjs?v=d8bd729ee7';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -80,7 +80,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=970ad7e4e1', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=d8bd729ee7', import.meta.url))).text();
   return cssText;
 }
 

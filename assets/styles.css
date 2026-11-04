@@ -1064,6 +1064,16 @@ img {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+.app-user {
+  flex-wrap: wrap;
+}
+.app-user .btn,
+.app-user .role-badge,
+.app-user [class*='badge'] {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  flex: none;
+}
 
 .mode-badge,
 .role-badge {
