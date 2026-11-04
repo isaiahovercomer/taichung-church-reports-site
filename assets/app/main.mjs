@@ -5,13 +5,13 @@
 //   #/a/<id>[/materials|generate|outputs|settings]  行動報導協作頁
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs';
-import { captureVideoFrame, resizePhoto } from './media.mjs';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs';
-import { buildPdf } from '../report/pdf.mjs';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs';
+import { ApiError, createApi, detectMode } from './api.mjs?v=9a18fbf016';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=9a18fbf016';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=9a18fbf016';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=9a18fbf016';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=9a18fbf016';
+import { buildPdf } from '../report/pdf.mjs?v=9a18fbf016';
+import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=9a18fbf016';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -70,7 +70,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=9a18fbf016', import.meta.url))).text();
   return cssText;
 }
 
