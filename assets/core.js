@@ -25,7 +25,8 @@ var RptCore = (function () {
   'use strict';
 
   // ---------- 常數 ----------
-  var RPT_VERSION_ = 2;
+  // version 3：合併查詢加速（boot／action.open／photos.getMany）、協作者姓名與常用聯絡人、行動錄音逐字稿（OpenAI）
+  var RPT_VERSION_ = 3;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -41,7 +42,17 @@ var RptCore = (function () {
     photoMaxBytes: Math.floor(1.5 * 1024 * 1024),
     videoMaxMbDefault: 200,
     outputMaxChars: 20 * 1024 * 1024,
-    actionsPerUserPerDay: 20
+    actionsPerUserPerDay: 20,
+    audioMaxMbDefault: 600,
+    // 轉錄一段：瀏覽器切好的 16kHz 單聲道 WAV（5 分鐘約 9.6MB）；OpenAI 單檔上限 25MB
+    segmentMaxBytes: 20 * 1024 * 1024,
+    segmentsPerRecording: 80,
+    recordingsPerAction: 20,
+    transcriptMaxChars: 300000,
+    correctChunkMaxChars: 8000,
+    summaryInputMaxChars: 150000,
+    photosPerBatch: 8,
+    contactsMax: 80
   };
   var RPT_P_ = {
     pepper: 'RPT_PEPPER',
@@ -49,7 +60,34 @@ var RptCore = (function () {
     mailQuota: 'RPT_MAIL_QUOTA',
     sessionPrefix: 'RPT_SESS_',
     sessionIndexPrefix: 'RPT_SIDX_',
-    videoMaxMb: 'RPT_VIDEO_MAX_MB'
+    videoMaxMb: 'RPT_VIDEO_MAX_MB',
+    audioMaxMb: 'RPT_AUDIO_MAX_MB',
+    contactsPrefix: 'RPT_CONT_',
+    aiKey: 'RPT_OPENAI_KEY',
+    aiConfig: 'RPT_AI_CONFIG'
+  };
+  // OpenAI 模型預設值（總管理者可在「總管理者名單」頁更改，不必改程式）。
+  // whisper-1／gpt-4o-transcribe 已公告 2027-02-26 停用，所以預設用 gpt-transcribe。
+  var RPT_AI_DEFAULTS_ = { transcribeModel: 'gpt-transcribe', chatModel: 'gpt-6-luna' };
+  // 逐字稿規則（全站預設）：常用詞彙會放進轉錄提示，替換規則逐字套用，兩段說明給 AI 修正與彙整
+  var RPT_DEFAULT_RULES_ = {
+    vocabulary: [
+      '召會', '主恢復', '職事', '倪柝聲', '李常受', '申言', '擘餅聚會', '主日聚會', '禱告聚會', '小排', '家聚會', '福音聚會',
+      '青職', '大專', '青少年', '兒童排', '全時間訓練', '生命讀經', '晨興聖言', '恢復本', '基督的身體', '新耶路撒冷',
+      '召會生活', '聖徒', '弟兄', '姊妹', '長老', '執事', '會所', '受浸', '得救', '呼求主名', '三一神', '調和的靈'
+    ],
+    replacements: [
+      { from: '招會', to: '召會' },
+      { from: '照會', to: '召會' },
+      { from: '主回復', to: '主恢復' },
+      { from: '回復本', to: '恢復本' },
+      { from: '姐妹', to: '姊妹' },
+      { from: '擘並', to: '擘餅' }
+    ],
+    correctionNotes:
+      '使用台灣繁體中文與全形標點。只修正錯字、同音字、標點與斷句，不增刪內容、不改寫語氣，保留講員原話；口頭禪（嗯、那個）可以刪除。人名、地名照原文，不確定時不要猜。',
+    summaryNotes:
+      '用條列整理：一、行動概要（時間、地點、對象、參加人數）；二、信息與分享重點；三、見證與故事（誰、發生什麼、結果）；四、數字（人數、受浸、得救、決志等）；五、決議與後續事項。每點一行、精簡，只寫錄音裡有的內容，沒有就略過該項。'
   };
   var RPT_CELL_MAX_ = 40000;
   var RPT_MAX_COLLABORATORS_ = 300;
@@ -640,6 +678,7 @@ var RptCore = (function () {
     if (out.myRole === 'manager') {
       out.owners = (a.owners || []).slice();
       out.collaborators = (a.collaborators || []).slice();
+      out.collaboratorNames = namesFor_(a.collaboratorNames, out.collaborators);
     } else if (out.myRole === 'collaborator') {
       out.owners = (a.owners || []).slice();
     }
@@ -656,6 +695,47 @@ var RptCore = (function () {
     for (var i = 0; i < list.length; i++) if (!arrayIncludes_(owners, list[i])) out.push(list[i]);
     return out;
   }
+  /** 只留下名單上的人的姓名（email → 姓名；姓名是選填的備註，不影響權限） */
+  function namesFor_(names, emails) {
+    var out = {};
+    if (!names || typeof names !== 'object') return out;
+    for (var i = 0; i < emails.length; i++) if (hasOwn_(names, emails[i]) && names[emails[i]]) out[emails[i]] = names[emails[i]];
+    return out;
+  }
+  function personName_(v) {
+    return str_(v == null ? '' : v, '姓名', 40, false);
+  }
+  /**
+   * 協作者輸入：相容舊格式（字串「一行一個／逗號分隔」或 email 陣列），
+   * 新格式為 [{ email, name }]，或 email 陣列＋另送 collaboratorNames { email: 姓名 }。
+   */
+  function collaboratorInput_(list, namesIn) {
+    var emails = [];
+    var names = {};
+    var items = list;
+    if (items == null) items = [];
+    if (isString_(items)) items = items.split(/[\s,;，；、]+/);
+    if (Object.prototype.toString.call(items) !== '[object Array]') fail_('BAD_INPUT', '協作者 email 格式不正確');
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var raw = it && typeof it === 'object' ? it.email : it;
+      if (!trim_(raw)) continue;
+      var e = requireEmail_(raw, '協作者 email');
+      if (!arrayIncludes_(emails, e)) emails.push(e);
+      var n = it && typeof it === 'object' ? personName_(it.name) : '';
+      if (n) names[e] = n;
+    }
+    if (namesIn && typeof namesIn === 'object') {
+      for (var k in namesIn) {
+        if (!hasOwn_(namesIn, k)) continue;
+        var ek = normalizeEmail(k);
+        var nk = personName_(namesIn[k]);
+        if (nk && arrayIncludes_(emails, ek)) names[ek] = nk;
+      }
+    }
+    if (emails.length > RPT_MAX_COLLABORATORS_) fail_('BAD_INPUT', '協作者 email 最多 ' + RPT_MAX_COLLABORATORS_ + ' 個');
+    return { emails: emails, names: names };
+  }
   function actionFields_(data, isCreate, canChangeOwners) {
     var out = {};
     out.name = str_(data.name, '行動名稱', 100, true);
@@ -669,7 +749,11 @@ var RptCore = (function () {
       if (!out.owners.length) fail_('BAD_INPUT', '請填寫負責人 email');
     }
     // 修改時沒送 collaborators 就維持原名單（協作者改用 actions.addCollaborator／removeCollaborator 增減）
-    if (isCreate || data.collaborators != null) out.collaborators = emailList_(data.collaborators, '協作者 email', RPT_MAX_COLLABORATORS_);
+    if (isCreate || data.collaborators != null) {
+      var ci = collaboratorInput_(data.collaborators, data.collaboratorNames);
+      out.collaborators = ci.emails;
+      out.collaboratorNames = ci.names;
+    }
     out.openSubmission = data.openSubmission === true;
     out.defaults = normalizeSettings(data.defaults);
     return out;
@@ -704,10 +788,12 @@ var RptCore = (function () {
       createdAt: now,
       updatedAt: now
     };
+    a.collaboratorNames = namesFor_(f.collaboratorNames, a.collaborators);
     env.withLock(function () {
       checkCreateQuota_(env, ctx);
       env.store.createAction(a);
     });
+    rememberContacts_(env, ctx.email, a.collaborators, a.collaboratorNames);
     return { action: publicAction_(ctx, a) };
   }
   function updateAction_(env, ctx, data) {
@@ -720,6 +806,12 @@ var RptCore = (function () {
     a.description = f.description;
     if (f.owners) a.owners = f.owners;
     a.collaborators = collaboratorsFor_(f.collaborators || a.collaborators || [], a.owners);
+    // 姓名：有送新名單就合併（新送的優先），沒送就保留原本的
+    var mergedNames = {};
+    var k;
+    for (k in a.collaboratorNames || {}) if (hasOwn_(a.collaboratorNames, k)) mergedNames[k] = a.collaboratorNames[k];
+    for (k in f.collaboratorNames || {}) if (hasOwn_(f.collaboratorNames, k)) mergedNames[k] = f.collaboratorNames[k];
+    a.collaboratorNames = namesFor_(mergedNames, a.collaborators);
     a.openSubmission = f.openSubmission;
     a.defaults = f.defaults;
     a.updatedAt = new Date(env.now()).toISOString();
@@ -734,6 +826,7 @@ var RptCore = (function () {
     var a = loadAction_(env, ctx, data.actionId);
     if (!canManage_(ctx, a)) fail_('FORBIDDEN', '只有這個行動的負責人可以新增協作者');
     var email = requireEmail_(data.email, '協作者 email');
+    var name = personName_(data.name);
     if (arrayIncludes_(a.owners || [], email)) fail_('BAD_INPUT', '這個 email 已經是負責人');
     env.withLock(function () {
       a = env.store.getAction(a.id) || a; // 在鎖內重讀，避免同時增減時蓋掉別人的變更
@@ -743,9 +836,16 @@ var RptCore = (function () {
         list.push(email);
       }
       a.collaborators = list;
+      // 已在名單上再新增一次＝更新姓名
+      var names = namesFor_(a.collaboratorNames, list);
+      if (name) names[email] = name;
+      a.collaboratorNames = names;
       a.updatedAt = new Date(env.now()).toISOString();
       env.store.updateAction(a);
     });
+    var nm = {};
+    if (name) nm[email] = name;
+    rememberContacts_(env, ctx.email, [email], nm);
     return { action: publicAction_(ctx, a) };
   }
   /** 負責人移除共同協作者；協作者也可以把自己移除（退出行動）。已上傳的素材保留，由負責人決定是否刪除。 */
@@ -760,6 +860,7 @@ var RptCore = (function () {
       var keep = [];
       for (var i = 0; i < (a.collaborators || []).length; i++) if (a.collaborators[i] !== email) keep.push(a.collaborators[i]);
       a.collaborators = keep;
+      a.collaboratorNames = namesFor_(a.collaboratorNames, keep);
       a.updatedAt = new Date(env.now()).toISOString();
       env.store.updateAction(a);
     });
@@ -936,16 +1037,27 @@ var RptCore = (function () {
     var n = Number(env.props.get(RPT_P_.videoMaxMb));
     return n > 0 ? n : limits_(env).videoMaxMbDefault;
   }
-  function createVideoUpload_(env, ctx, data) {
+  // 影片與錄音檔共用的 Drive 直傳（resumable upload）：kind 決定 mime 白名單與大小上限
+  var MEDIA_KINDS_ = {
+    video: { label: '影片', mime: /^video\/[A-Za-z0-9.+-]+$/, tooLarge: '，請改貼 YouTube／Google Drive 連結' },
+    // m4a 常被標成 audio/x-m4a、audio/mp4，有些手機錄音是 video/mp4（只有聲音）
+    audio: { label: '錄音檔', mime: /^(audio\/[A-Za-z0-9.+-]+|video\/(mp4|webm|quicktime))$/, tooLarge: '' }
+  };
+  function mediaMaxMb_(env, kind) {
+    return kind === 'audio' ? audioMaxMb_(env) : videoMaxMb_(env);
+  }
+  function createMediaUpload_(env, ctx, data, kind) {
     data = data || {};
+    var K = MEDIA_KINDS_[kind];
     var action = loadAction_(env, ctx, data.actionId);
+    if (kind === 'audio') requireWork_(ctx, action);
     var name = str_(data.name, '檔名', 200, true).replace(/[\\\/:*?"<>|\u0000-\u001f]/g, '_');
     var mime = str_(data.mime, '檔案類型', 100, true);
-    if (!/^video\/[A-Za-z0-9.+-]+$/.test(mime)) fail_('BAD_INPUT', '只接受影片檔');
+    if (!K.mime.test(mime)) fail_('BAD_INPUT', '只接受' + K.label);
     var size = Number(data.size);
-    var maxMb = videoMaxMb_(env);
+    var maxMb = mediaMaxMb_(env, kind);
     if (!(size > 0) || Math.floor(size) !== size) fail_('BAD_INPUT', '檔案大小不正確');
-    if (size > maxMb * 1024 * 1024) fail_('TOO_LARGE', '影片超過 ' + maxMb + 'MB 上限，請改貼 YouTube／Google Drive 連結');
+    if (size > maxMb * 1024 * 1024) fail_('TOO_LARGE', K.label + '超過 ' + maxMb + 'MB 上限' + K.tooLarge);
     var origin = str_(data.origin, 'origin', 200, true);
     if (!/^https?:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?$/.test(origin)) fail_('BAD_INPUT', 'origin 格式不正確');
     var up = env.store.createResumableUpload(action.id, {
@@ -953,22 +1065,37 @@ var RptCore = (function () {
       mime: mime,
       size: size,
       origin: origin,
-      meta: { kind: 'video-pending', uploadedBy: ctx.email }
+      meta: { kind: kind + '-pending', uploadedBy: ctx.email }
     });
     return { uploadUrl: up.uploadUrl, maxBytes: maxMb * 1024 * 1024 };
   }
-  function completeVideoUpload_(env, ctx, data) {
+  function completeMediaUpload_(env, ctx, data, kind) {
+    var K = MEDIA_KINDS_[kind];
     var action = loadAction_(env, ctx, data && data.actionId);
     var f = env.store.getFile(action.id, id_(data.fileId, '檔案 id'), false);
-    if (!f || !f.meta || (f.meta.kind !== 'video-pending' && f.meta.kind !== 'video')) fail_('NOT_FOUND', '找不到上傳的影片（可能尚未上傳完成）');
+    if (!f || !f.meta || (f.meta.kind !== kind + '-pending' && f.meta.kind !== kind)) fail_('NOT_FOUND', '找不到上傳的' + K.label + '（可能尚未上傳完成）');
     if (f.meta.uploadedBy !== ctx.email && !canManage_(ctx, action)) fail_('FORBIDDEN', '不能引用別人上傳的檔案');
-    var maxBytes = videoMaxMb_(env) * 1024 * 1024;
-    if (!/^video\//.test(f.mime || '') || f.size > maxBytes) {
+    var maxBytes = mediaMaxMb_(env, kind) * 1024 * 1024;
+    if (!K.mime.test(f.mime || '') || f.size > maxBytes) {
       env.store.deleteFile(action.id, f.id);
-      fail_('TOO_LARGE', '影片格式不正確或超過大小上限，已刪除');
+      fail_('TOO_LARGE', K.label + '格式不正確或超過大小上限，已刪除');
     }
-    env.store.setFileMeta(action.id, f.id, { kind: 'video', uploadedBy: f.meta.uploadedBy, uploadedAt: new Date(env.now()).toISOString() });
-    return { video: { fileId: f.id, size: f.size, mime: f.mime } };
+    env.store.setFileMeta(action.id, f.id, { kind: kind, uploadedBy: f.meta.uploadedBy, uploadedAt: new Date(env.now()).toISOString() });
+    var out = {};
+    out[kind] = { fileId: f.id, size: f.size, mime: f.mime };
+    return out;
+  }
+  function createVideoUpload_(env, ctx, data) {
+    return createMediaUpload_(env, ctx, data, 'video');
+  }
+  function completeVideoUpload_(env, ctx, data) {
+    return completeMediaUpload_(env, ctx, data, 'video');
+  }
+  function createAudioUpload_(env, ctx, data) {
+    return createMediaUpload_(env, ctx, data, 'audio');
+  }
+  function completeAudioUpload_(env, ctx, data) {
+    return completeMediaUpload_(env, ctx, data, 'audio');
   }
 
   // ---------- 產出紀錄 ----------
@@ -1008,6 +1135,606 @@ var RptCore = (function () {
       return a.createdAt < b.createdAt ? 1 : -1;
     });
     return { outputs: list };
+  }
+
+  // ---------- 常用聯絡人（每位使用者自己的，存在 ScriptProperties；單一值上限約 9KB） ----------
+  function contactsKey_(env, email) {
+    return RPT_P_.contactsPrefix + emailKey_(env, email);
+  }
+  function readContacts_(env, email) {
+    var list = propJson_(env, contactsKey_(env, email), []);
+    return Object.prototype.toString.call(list) === '[object Array]' ? list : [];
+  }
+  function writeContacts_(env, email, list) {
+    list.sort(function (a, b) {
+      return b.t - a.t;
+    });
+    var max = limits_(env).contactsMax;
+    while (list.length > max) list.pop();
+    while (list.length && JSON.stringify(list).length > 8000) list.pop();
+    setPropJson_(env, contactsKey_(env, email), list);
+  }
+  /** 新增協作者時順手記到負責人的常用聯絡人；失敗不影響主要操作 */
+  function rememberContacts_(env, owner, emails, names) {
+    if (!emails || !emails.length) return;
+    try {
+      env.withLock(function () {
+        var list = readContacts_(env, owner);
+        var now = env.now();
+        for (var i = 0; i < emails.length; i++) {
+          var e = emails[i];
+          if (e === owner) continue;
+          var found = null;
+          for (var j = 0; j < list.length; j++) if (list[j].e === e) found = list[j];
+          var n = names && hasOwn_(names, e) ? names[e] : '';
+          if (found) {
+            found.c = (found.c || 0) + 1;
+            found.t = now;
+            if (n) found.n = n;
+          } else list.push({ e: e, n: n || '', c: 1, t: now });
+        }
+        writeContacts_(env, owner, list);
+      });
+    } catch (err) {
+      if (env.log) env.log('contacts: ' + sanitizeError(err && err.message ? err.message : err));
+    }
+  }
+  function publicContacts_(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) out.push({ email: list[i].e, name: list[i].n || '', count: list[i].c || 0, lastUsed: new Date(list[i].t || 0).toISOString() });
+    return out;
+  }
+  function listContacts_(env, ctx) {
+    return { contacts: publicContacts_(readContacts_(env, ctx.email)) };
+  }
+  function saveContact_(env, ctx, data) {
+    data = data || {};
+    var email = requireEmail_(data.email, '聯絡人 email');
+    var name = personName_(data.name);
+    var list;
+    env.withLock(function () {
+      list = readContacts_(env, ctx.email);
+      var found = null;
+      for (var i = 0; i < list.length; i++) if (list[i].e === email) found = list[i];
+      if (found) found.n = name;
+      else list.push({ e: email, n: name, c: 0, t: env.now() });
+      writeContacts_(env, ctx.email, list);
+    });
+    return { contacts: publicContacts_(list) };
+  }
+  function removeContact_(env, ctx, data) {
+    var email = requireEmail_(data && data.email, '聯絡人 email');
+    var keep = [];
+    env.withLock(function () {
+      var list = readContacts_(env, ctx.email);
+      for (var i = 0; i < list.length; i++) if (list[i].e !== email) keep.push(list[i]);
+      writeContacts_(env, ctx.email, keep);
+    });
+    return { contacts: publicContacts_(keep) };
+  }
+
+  // ---------- 合併查詢（加速）：Apps Script 每次往返固定要 1 秒以上，畫面需要的資料一次拿齊 ----------
+  function meInfo_(env, ctx) {
+    return {
+      email: ctx.email,
+      role: ctx.role,
+      presets: RPT_PRESETS_,
+      ranges: RPT_SETTING_RANGES_,
+      layouts: RPT_LAYOUTS_,
+      videoMaxMb: videoMaxMb_(env),
+      audioMaxMb: audioMaxMb_(env),
+      ai: aiStatus_(env),
+      version: RPT_VERSION_
+    };
+  }
+  /** 首頁：我是誰＋我的行動 */
+  function boot_(env, ctx) {
+    var out = listActions_(env, ctx);
+    out.me = meInfo_(env, ctx);
+    return out;
+  }
+  /** 行動頁：只讀這一個行動（不必掃整份索引）＋素材＋錄音摘要；withMe 時一併回傳 me */
+  function openAction_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    var list = env.store.listMaterials(a.id);
+    var mats = [];
+    for (var i = 0; i < list.length; i++) mats.push(publicMaterial_(ctx, a, list[i]));
+    mats.sort(function (x, y) {
+      return x.createdAt < y.createdAt ? -1 : 1;
+    });
+    var out = { action: publicAction_(ctx, a), materials: mats, recordings: recordingSummaries_(env, ctx, a) };
+    if (data.withMe) out.me = meInfo_(env, ctx);
+    return out;
+  }
+  /** 一次取多張照片；thumb=true 時回傳縮圖（列表用，正式環境由 Drive 產生，約 220px） */
+  function getPhotos_(env, ctx, data) {
+    data = data || {};
+    var action = loadAction_(env, ctx, data.actionId);
+    var ids = data.ids;
+    if (Object.prototype.toString.call(ids) !== '[object Array]' || !ids.length) fail_('BAD_INPUT', '請指定照片');
+    if (ids.length > limits_(env).photosPerBatch) fail_('BAD_INPUT', '一次最多取 ' + limits_(env).photosPerBatch + ' 張照片');
+    var thumb = data.thumb === true;
+    var out = [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = id_(ids[i], '照片 id');
+      var f = env.store.getFile(action.id, id, true, thumb ? { thumb: true } : null);
+      if (!f || !f.meta || f.meta.kind !== 'photo') out.push({ id: id, error: 'NOT_FOUND' });
+      else out.push({ id: id, mime: f.mime, data: f.base64, thumb: !!f.thumb });
+    }
+    return { photos: out };
+  }
+
+  // ---------- OpenAI 設定（總管理者） ----------
+  function aiConfig_(env) {
+    var c = propJson_(env, RPT_P_.aiConfig, {});
+    return {
+      transcribeModel: (c && c.transcribeModel) || RPT_AI_DEFAULTS_.transcribeModel,
+      chatModel: (c && c.chatModel) || RPT_AI_DEFAULTS_.chatModel
+    };
+  }
+  function aiKey_(env) {
+    return env.props.get(RPT_P_.aiKey) || '';
+  }
+  /** env.ai.fake：mock／示範模式的假 AI，不需要金鑰 */
+  function aiReady_(env) {
+    return !!(env.ai && (env.ai.fake || aiKey_(env)));
+  }
+  function aiStatus_(env) {
+    var c = aiConfig_(env);
+    return { ready: aiReady_(env), transcribeModel: c.transcribeModel, chatModel: c.chatModel, fake: !!(env.ai && env.ai.fake) };
+  }
+  function requireAi_(env) {
+    if (!aiReady_(env)) fail_('AI_NOT_READY', '尚未設定 OpenAI 金鑰，請總管理者到「總管理者名單」頁設定後再試');
+  }
+  function audioMaxMb_(env) {
+    var n = Number(env.props.get(RPT_P_.audioMaxMb));
+    return n > 0 ? n : limits_(env).audioMaxMbDefault;
+  }
+  function getAiConfig_(env, ctx) {
+    requireSuper_(ctx);
+    var key = aiKey_(env);
+    var c = aiConfig_(env);
+    return {
+      transcribeModel: c.transcribeModel,
+      chatModel: c.chatModel,
+      defaults: RPT_AI_DEFAULTS_,
+      hasKey: !!key,
+      // 只回傳末 4 碼讓管理者確認是哪一把；金鑰本身不會離開後端
+      keyHint: key ? '…' + key.slice(-4) : '',
+      audioMaxMb: audioMaxMb_(env),
+      fake: !!(env.ai && env.ai.fake)
+    };
+  }
+  function setAiConfig_(env, ctx, data) {
+    requireSuper_(ctx);
+    data = data || {};
+    var MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,79}$/;
+    var c = propJson_(env, RPT_P_.aiConfig, {}) || {};
+    if (data.transcribeModel != null) {
+      var tm = trim_(data.transcribeModel);
+      if (tm && !MODEL_RE.test(tm)) fail_('BAD_INPUT', '轉錄模型名稱格式不正確');
+      c.transcribeModel = tm || '';
+    }
+    if (data.chatModel != null) {
+      var cm = trim_(data.chatModel);
+      if (cm && !MODEL_RE.test(cm)) fail_('BAD_INPUT', 'AI 修正／彙整模型名稱格式不正確');
+      c.chatModel = cm || '';
+    }
+    if (data.audioMaxMb != null) {
+      var mb = Number(data.audioMaxMb);
+      if (!(mb >= 1 && mb <= 4000) || Math.floor(mb) !== mb) fail_('BAD_INPUT', '錄音上限需為 1–4000 MB 的整數');
+      env.props.set(RPT_P_.audioMaxMb, String(mb));
+    }
+    setPropJson_(env, RPT_P_.aiConfig, c);
+    if (data.clearKey === true) env.props.del(RPT_P_.aiKey);
+    else if (data.apiKey != null && trim_(data.apiKey)) {
+      var k = trim_(data.apiKey);
+      if (!/^sk-[A-Za-z0-9_-]{20,300}$/.test(k)) fail_('BAD_INPUT', 'OpenAI 金鑰格式不正確（應為 sk- 開頭）');
+      env.props.set(RPT_P_.aiKey, k);
+    }
+    return getAiConfig_(env, ctx);
+  }
+
+  // ---------- 逐字稿規則（全站＋各行動，可以慢慢累積） ----------
+  function cleanRules_(r) {
+    r = r && typeof r === 'object' ? r : {};
+    var out = { vocabulary: [], replacements: [], correctionNotes: '', summaryNotes: '' };
+    var vocab = r.vocabulary;
+    if (isString_(vocab)) vocab = vocab.split(/[\n,，、]+/);
+    if (vocab != null && Object.prototype.toString.call(vocab) !== '[object Array]') fail_('BAD_INPUT', '常用詞彙格式不正確');
+    var i;
+    for (i = 0; vocab && i < vocab.length; i++) {
+      var w = str_(vocab[i] == null ? '' : String(vocab[i]), '常用詞彙', 40, false);
+      if (w && !arrayIncludes_(out.vocabulary, w)) out.vocabulary.push(w);
+    }
+    if (out.vocabulary.length > 400) fail_('BAD_INPUT', '常用詞彙最多 400 個');
+    var reps = r.replacements;
+    if (reps != null && Object.prototype.toString.call(reps) !== '[object Array]') fail_('BAD_INPUT', '替換規則格式不正確');
+    for (i = 0; reps && i < reps.length; i++) {
+      var it = reps[i] || {};
+      var from = str_(it.from == null ? '' : String(it.from), '替換規則（原字）', 40, false);
+      var to = str_(it.to == null ? '' : String(it.to), '替換規則（改成）', 40, false);
+      if (!from || from === to) continue;
+      var dup = false;
+      for (var j = 0; j < out.replacements.length; j++) if (out.replacements[j].from === from) (out.replacements[j].to = to), (dup = true);
+      if (!dup) out.replacements.push({ from: from, to: to });
+    }
+    if (out.replacements.length > 400) fail_('BAD_INPUT', '替換規則最多 400 條');
+    out.correctionNotes = str_(r.correctionNotes, 'AI 修正說明', 3000, false);
+    out.summaryNotes = str_(r.summaryNotes, '重點彙整說明', 3000, false);
+    return out;
+  }
+  function globalRules_(env) {
+    var r = env.store.getDoc(null, 'rules');
+    return r ? cleanRules_(r) : cleanRules_(RPT_DEFAULT_RULES_);
+  }
+  function actionRules_(env, aid) {
+    var r = env.store.getDoc(aid, 'rules');
+    return r ? cleanRules_(r) : cleanRules_({});
+  }
+  /** 全站規則＋本行動規則：詞彙聯集；替換規則同一原字以本行動為準；說明兩段相接 */
+  function mergedRules_(env, aid) {
+    var g = globalRules_(env);
+    var a = actionRules_(env, aid);
+    var out = { vocabulary: g.vocabulary.slice(), replacements: [], correctionNotes: '', summaryNotes: '' };
+    var i;
+    for (i = 0; i < a.vocabulary.length; i++) if (!arrayIncludes_(out.vocabulary, a.vocabulary[i])) out.vocabulary.push(a.vocabulary[i]);
+    var map = {};
+    var order = [];
+    var all = g.replacements.concat(a.replacements);
+    for (i = 0; i < all.length; i++) {
+      if (!hasOwn_(map, all[i].from)) order.push(all[i].from);
+      map[all[i].from] = all[i].to;
+    }
+    for (i = 0; i < order.length; i++) out.replacements.push({ from: order[i], to: map[order[i]] });
+    out.correctionNotes = [g.correctionNotes, a.correctionNotes].join('\n').replace(/^\s+|\s+$/g, '');
+    out.summaryNotes = [g.summaryNotes, a.summaryNotes].join('\n').replace(/^\s+|\s+$/g, '');
+    return out;
+  }
+  /** 逐字套用替換規則（長的原字先換，避免「主回復本」被短規則拆壞）；前端「套用替換規則」也用這個 */
+  function applyReplacements(text, reps) {
+    var s = String(text == null ? '' : text);
+    var list = (reps || []).slice().sort(function (a, b) {
+      return b.from.length - a.from.length;
+    });
+    for (var i = 0; i < list.length; i++) if (list[i].from) s = s.split(list[i].from).join(list[i].to);
+    return s;
+  }
+  function getRules_(env, ctx, data) {
+    data = data || {};
+    var out = { global: globalRules_(env), defaults: cleanRules_(RPT_DEFAULT_RULES_), canEditGlobal: ctx.role === 'super' };
+    if (data.actionId) {
+      var a = loadAction_(env, ctx, data.actionId);
+      out.action = actionRules_(env, a.id);
+      out.canEditAction = canManage_(ctx, a);
+      out.merged = mergedRules_(env, a.id);
+    }
+    return out;
+  }
+  function setRules_(env, ctx, data) {
+    data = data || {};
+    var rules = cleanRules_(data.rules);
+    if (data.scope === 'global') {
+      requireSuper_(ctx);
+      env.withLock(function () {
+        env.store.putDoc(null, 'rules', rules);
+      });
+    } else if (data.scope === 'action') {
+      var a = loadAction_(env, ctx, data.actionId);
+      if (!canManage_(ctx, a)) fail_('FORBIDDEN', '只有這個行動的負責人可以修改本行動的逐字稿規則');
+      env.withLock(function () {
+        env.store.putDoc(a.id, 'rules', rules);
+      });
+    } else fail_('BAD_INPUT', '規則範圍只能是全站或本行動');
+    return getRules_(env, ctx, { actionId: data.scope === 'action' ? data.actionId : null });
+  }
+
+  // ---------- 行動錄音與逐字稿 ----------
+  // 流程：瀏覽器把錄音切成約 5 分鐘、16kHz 單聲道 WAV → transcribe.segment 一段一段送 OpenAI 轉錄 →
+  //       全部完成後組成逐字稿 → 套用替換規則／AI 修正（transcript.correct，分段）→ 彙整重點（transcript.summarize）→ 加入素材。
+  //       原始錄音可另外用 audio.createUpload 直傳到行動的 Drive 資料夾保存（選用）。
+  function canWork_(ctx, action) {
+    return canManage_(ctx, action) || isCollaborator_(ctx, action);
+  }
+  function requireWork_(ctx, action) {
+    if (!canWork_(ctx, action)) fail_('FORBIDDEN', '只有負責人或共同協作者可以使用錄音逐字稿');
+  }
+  function recKey_(id) {
+    return 'rec:' + id;
+  }
+  function loadRecording_(env, action, id) {
+    var rec = env.store.getDoc(action.id, recKey_(id_(id, '錄音 id')));
+    if (!rec) fail_('NOT_FOUND', '找不到這個錄音');
+    if (Object.prototype.toString.call(rec.segments) !== '[object Array]') rec.segments = [];
+    return rec;
+  }
+  function doneCount_(rec) {
+    var n = 0;
+    for (var i = 0; i < rec.segments.length; i++) if (rec.segments[i] && isString_(rec.segments[i].text)) n++;
+    return n;
+  }
+  function joinSegments_(rec) {
+    var parts = [];
+    for (var i = 0; i < rec.segments.length; i++) if (rec.segments[i] && rec.segments[i].text) parts.push(rec.segments[i].text);
+    return parts.join('\n');
+  }
+  function recordingSummary_(ctx, action, rec) {
+    var segs = [];
+    for (var i = 0; i < (rec.segmentCount || rec.segments.length); i++) {
+      var s = rec.segments[i];
+      segs.push(s && isString_(s.text) ? 1 : 0);
+    }
+    return {
+      id: rec.id,
+      name: rec.name,
+      size: rec.size || 0,
+      durationSec: rec.durationSec || 0,
+      segmentSec: rec.segmentSec || 0,
+      segmentCount: rec.segmentCount || 0,
+      segmentsDone: segs,
+      doneCount: doneCount_(rec),
+      status: rec.status,
+      fileId: rec.fileId || '',
+      transcriptChars: (rec.transcript || '').length,
+      hasCorrected: !!rec.corrected,
+      hasSummary: !!rec.summary,
+      createdBy: rec.createdBy,
+      createdAt: rec.createdAt,
+      updatedAt: rec.updatedAt,
+      canEdit: canWork_(ctx, action),
+      canDelete: canManage_(ctx, action) || rec.createdBy === ctx.email
+    };
+  }
+  function recordingSummaries_(env, ctx, action) {
+    if (!canWork_(ctx, action) || !env.store.listDocs) return [];
+    var docs = env.store.listDocs(action.id, 'rec:');
+    var out = [];
+    for (var i = 0; i < docs.length; i++) {
+      var rec = docs[i];
+      if (!rec || !rec.id) continue;
+      if (Object.prototype.toString.call(rec.segments) !== '[object Array]') rec.segments = [];
+      out.push(recordingSummary_(ctx, action, rec));
+    }
+    out.sort(function (a, b) {
+      return a.createdAt < b.createdAt ? 1 : -1;
+    });
+    return out;
+  }
+  function publicRecording_(ctx, action, rec) {
+    var out = recordingSummary_(ctx, action, rec);
+    var segs = [];
+    for (var i = 0; i < rec.segments.length; i++) if (rec.segments[i]) segs.push({ i: i, start: rec.segments[i].start, end: rec.segments[i].end, text: rec.segments[i].text });
+    out.segments = segs;
+    out.transcript = rec.transcript || '';
+    out.corrected = rec.corrected || '';
+    out.summary = rec.summary || '';
+    return out;
+  }
+  function listRecordings_(env, ctx, data) {
+    var a = loadAction_(env, ctx, data && data.actionId);
+    requireWork_(ctx, a);
+    return { recordings: recordingSummaries_(env, ctx, a) };
+  }
+  function getRecording_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    return { recording: publicRecording_(ctx, a, loadRecording_(env, a, data.id)) };
+  }
+  function numIn_(v, label, min, max) {
+    var n = Number(v);
+    if (!isFinite(n) || n < min || n > max) fail_('BAD_INPUT', label + ' 不正確');
+    return n;
+  }
+  /**
+   * 建立錄音紀錄。兩種用法：
+   *   1. 要轉錄：送 name、size、durationSec、segmentSec、segmentCount（預估），之後逐段呼叫 transcribe.segment
+   *   2. 已經有逐字稿（例如在自己電腦轉好）：送 name＋transcript，直接完成
+   */
+  function createRecording_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    var L = limits_(env);
+    var now = new Date(env.now()).toISOString();
+    var transcript = data.transcript != null ? str_(data.transcript, '逐字稿', L.transcriptMaxChars, false) : '';
+    var rec = {
+      id: newId_(env, 'r'),
+      name: str_(data.name, '錄音名稱', 200, true),
+      size: data.size != null ? Math.floor(numIn_(data.size, '檔案大小', 0, 1e11)) : 0,
+      durationSec: data.durationSec != null ? Math.round(numIn_(data.durationSec, '錄音長度', 0, 24 * 3600)) : 0,
+      segmentSec: data.segmentSec != null ? Math.round(numIn_(data.segmentSec, '分段長度', 30, 1500)) : 0,
+      segmentCount: data.segmentCount != null ? Math.floor(numIn_(data.segmentCount, '分段數', 0, L.segmentsPerRecording)) : 0,
+      segments: [],
+      status: transcript ? 'done' : 'transcribing',
+      transcript: transcript,
+      corrected: '',
+      summary: '',
+      createdBy: ctx.email,
+      createdAt: now,
+      updatedAt: now
+    };
+    if (!transcript && !rec.segmentCount) fail_('BAD_INPUT', '請提供錄音分段數，或直接貼上逐字稿');
+    env.withLock(function () {
+      var existing = env.store.listDocs(a.id, 'rec:');
+      if (existing.length >= L.recordingsPerAction) fail_('BAD_INPUT', '每個行動最多 ' + L.recordingsPerAction + ' 個錄音');
+      env.store.putDoc(a.id, recKey_(rec.id), rec);
+    });
+    return { recording: publicRecording_(ctx, a, rec) };
+  }
+  function transcribePrompt_(rules, prevText, model) {
+    var max = /whisper/i.test(model) ? 350 : 1200;
+    var p = '以下是台灣召會（台中市召會）聚會與行動的錄音，請用台灣繁體中文與全形標點轉寫。';
+    if (rules.vocabulary.length) p += '常用詞彙：' + rules.vocabulary.join('、') + '。';
+    if (p.length > max) p = p.slice(0, max);
+    // 接續上一段的結尾，讓斷句與用詞前後一致
+    if (prevText) {
+      var room = max - p.length - 4;
+      if (room > 20) p += '\n前文：' + String(prevText).slice(-Math.min(200, room));
+    }
+    return p;
+  }
+  /** 只接受本平台瀏覽器端切好的 WAV（RIFF....WAVE）；回傳位元組數 */
+  function checkWav_(b64, maxBytes) {
+    if (!isString_(b64) || !b64 || !/^[A-Za-z0-9+\/]+={0,2}$/.test(b64)) fail_('BAD_INPUT', '錄音分段資料格式不正確');
+    var h = base64Head_(b64, 12);
+    var riff = h.length >= 12 && h[0] === 0x52 && h[1] === 0x49 && h[2] === 0x46 && h[3] === 0x46 && h[8] === 0x57 && h[9] === 0x41 && h[10] === 0x56 && h[11] === 0x45;
+    if (!riff) fail_('BAD_INPUT', '錄音分段必須是 WAV 格式');
+    var size = base64Size_(b64);
+    if (size > maxBytes) fail_('TOO_LARGE', '錄音分段太大（上限 ' + Math.floor(maxBytes / 1048576) + 'MB）');
+    return size;
+  }
+  function transcribeSegment_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    requireAi_(env);
+    var L = limits_(env);
+    var rec = loadRecording_(env, a, data.id);
+    var index = Math.floor(numIn_(data.index, '分段序號', 0, L.segmentsPerRecording - 1));
+    var start = numIn_(data.start, '分段開始時間', 0, 24 * 3600);
+    var end = numIn_(data.end, '分段結束時間', start, 24 * 3600);
+    checkWav_(data.data, L.segmentMaxBytes);
+    var rules = mergedRules_(env, a.id);
+    var cfg = aiConfig_(env);
+    var prev = index > 0 && rec.segments[index - 1] ? rec.segments[index - 1].text : '';
+    var result = env.ai.transcribe({
+      apiKey: aiKey_(env),
+      model: cfg.transcribeModel,
+      base64: data.data.replace(/^data:[^,]*,/, ''),
+      mime: 'audio/wav',
+      filename: 'segment-' + index + '.wav',
+      prompt: transcribePrompt_(rules, prev, cfg.transcribeModel),
+      language: /whisper|4o/i.test(cfg.transcribeModel) ? 'zh' : '',
+      segmentIndex: index
+    });
+    var text = trim_(result && isString_(result.text) ? result.text : '');
+    var out;
+    env.withLock(function () {
+      rec = loadRecording_(env, a, data.id); // 在鎖內重讀：多段同時送回時不互相覆蓋
+      rec.segments[index] = { start: start, end: end, text: text, at: new Date(env.now()).toISOString() };
+      // 分段數一開始是預估值；收到標記 last 的那一段才確定總數（各段可能不照順序送回）
+      if (data.last === true) {
+        rec.segmentCount = index + 1;
+        rec.countFinal = true;
+        if (rec.segments.length > rec.segmentCount) rec.segments.length = rec.segmentCount;
+      } else if (index + 1 > (rec.segmentCount || 0)) rec.segmentCount = index + 1;
+      var done = rec.countFinal === true;
+      for (var i = 0; done && i < rec.segmentCount; i++) if (!rec.segments[i] || !isString_(rec.segments[i].text)) done = false;
+      rec.status = done ? 'done' : 'transcribing';
+      if (done) rec.transcript = joinSegments_(rec).slice(0, L.transcriptMaxChars);
+      rec.updatedAt = new Date(env.now()).toISOString();
+      env.store.putDoc(a.id, recKey_(rec.id), rec);
+      out = { segment: { i: index, start: start, end: end, text: text }, status: rec.status, segmentCount: rec.segmentCount, doneCount: doneCount_(rec) };
+      if (rec.status === 'done') out.transcript = rec.transcript;
+    });
+    return out;
+  }
+  function updateRecording_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    var L = limits_(env);
+    var rec;
+    env.withLock(function () {
+      rec = loadRecording_(env, a, data.id);
+      if (data.name != null) rec.name = str_(data.name, '錄音名稱', 200, true);
+      if (data.transcript != null) {
+        rec.transcript = str_(data.transcript, '逐字稿', L.transcriptMaxChars, false);
+        if (rec.transcript) rec.status = 'done';
+      }
+      if (data.corrected != null) rec.corrected = str_(data.corrected, '修正稿', L.transcriptMaxChars, false);
+      if (data.summary != null) rec.summary = str_(data.summary, '重點彙整', 20000, false);
+      rec.updatedAt = new Date(env.now()).toISOString();
+      env.store.putDoc(a.id, recKey_(rec.id), rec);
+    });
+    return { recording: publicRecording_(ctx, a, rec) };
+  }
+  function attachRecordingFile_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    var f = env.store.getFile(a.id, id_(data.fileId, '檔案 id'), false);
+    if (!f || !f.meta || f.meta.kind !== 'audio') fail_('NOT_FOUND', '找不到上傳的錄音檔');
+    var rec;
+    env.withLock(function () {
+      rec = loadRecording_(env, a, data.id);
+      rec.fileId = f.id;
+      rec.updatedAt = new Date(env.now()).toISOString();
+      env.store.putDoc(a.id, recKey_(rec.id), rec);
+    });
+    return { recording: recordingSummary_(ctx, a, rec) };
+  }
+  function deleteRecording_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    var rec = loadRecording_(env, a, data.id);
+    if (!canManage_(ctx, a) && rec.createdBy !== ctx.email) fail_('FORBIDDEN', '只有負責人或上傳的人可以刪除這個錄音');
+    env.withLock(function () {
+      env.store.deleteDoc(a.id, recKey_(rec.id));
+    });
+    if (rec.fileId) env.store.deleteFile(a.id, rec.fileId);
+    return { deleted: true };
+  }
+  function rulesText_(rules) {
+    var lines = [];
+    if (rules.vocabulary.length) lines.push('常用詞彙（以這些寫法為準）：' + rules.vocabulary.join('、'));
+    if (rules.replacements.length) {
+      var reps = [];
+      for (var i = 0; i < rules.replacements.length && i < 200; i++) reps.push(rules.replacements[i].from + '→' + rules.replacements[i].to);
+      lines.push('常見錯字（左邊一律改成右邊）：' + reps.join('；'));
+    }
+    return lines.join('\n');
+  }
+  /** AI 修正一段逐字稿（前端把長逐字稿切成數千字一段依序送來，避免 Apps Script 6 分鐘上限） */
+  function correctTranscript_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    requireAi_(env);
+    loadRecording_(env, a, data.id);
+    var text = str_(data.text, '逐字稿段落', limits_(env).correctChunkMaxChars, true);
+    var rules = mergedRules_(env, a.id);
+    var system =
+      '你是台中市召會行動報導的逐字稿校對員。請校對使用者給的逐字稿片段，直接輸出校對後的全文，不要加任何說明、標題或引號。\n' +
+      (rules.correctionNotes || '') +
+      '\n' +
+      rulesText_(rules);
+    var out = env.ai.chat({ apiKey: aiKey_(env), model: aiConfig_(env).chatModel, system: system, user: text, task: 'correct' });
+    var fixed = applyReplacements(trim_(isString_(out) ? out : ''), rules.replacements);
+    if (!fixed) fail_('AI_ERROR', 'AI 沒有回傳內容，請稍後再試');
+    return { text: fixed };
+  }
+  /** 彙整重點：用修正稿（沒有就用原始逐字稿），結果存回錄音紀錄 */
+  function summarizeTranscript_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.actionId);
+    requireWork_(ctx, a);
+    requireAi_(env);
+    var L = limits_(env);
+    var rec = loadRecording_(env, a, data.id);
+    var source = rec.corrected || rec.transcript || '';
+    if (!trim_(source)) fail_('BAD_INPUT', '這個錄音還沒有逐字稿');
+    var rules = mergedRules_(env, a.id);
+    var system =
+      '你是台中市召會行動報導的記錄同工。請根據逐字稿彙整重點，用台灣繁體中文條列，每點一行，以「- 」開頭（可用「## 」小標分類）。' +
+      '只寫逐字稿裡有的內容，不要編造；人名、數字照原文。\n' +
+      (rules.summaryNotes || '') +
+      '\n' +
+      rulesText_(rules);
+    var user =
+      '行動：' + a.name + '（' + a.date + (a.place ? '，' + a.place : '') + '）\n錄音：' + rec.name + '\n\n逐字稿：\n' + source.slice(0, L.summaryInputMaxChars);
+    var out = env.ai.chat({ apiKey: aiKey_(env), model: aiConfig_(env).chatModel, system: system, user: user, task: 'summarize' });
+    var summary = applyReplacements(trim_(isString_(out) ? out : ''), rules.replacements).slice(0, 20000);
+    if (!summary) fail_('AI_ERROR', 'AI 沒有回傳內容，請稍後再試');
+    env.withLock(function () {
+      rec = loadRecording_(env, a, data.id);
+      rec.summary = summary;
+      rec.updatedAt = new Date(env.now()).toISOString();
+      env.store.putDoc(a.id, recKey_(rec.id), rec);
+    });
+    return { summary: summary, recording: recordingSummary_(ctx, a, rec) };
   }
 
   // ---------- 管理者 ----------
@@ -1067,7 +1794,29 @@ var RptCore = (function () {
     'admin.list': listAdmins_,
     'admin.add': addAdmin_,
     'admin.remove': removeAdmin_,
-    'config.set': setConfig_
+    'config.set': setConfig_,
+    // version 3
+    boot: boot_,
+    'action.open': openAction_,
+    'photos.getMany': getPhotos_,
+    'contacts.list': listContacts_,
+    'contacts.save': saveContact_,
+    'contacts.remove': removeContact_,
+    'ai.config.get': getAiConfig_,
+    'ai.config.set': setAiConfig_,
+    'rules.get': getRules_,
+    'rules.set': setRules_,
+    'recordings.list': listRecordings_,
+    'recordings.get': getRecording_,
+    'recordings.create': createRecording_,
+    'recordings.update': updateRecording_,
+    'recordings.attachFile': attachRecordingFile_,
+    'recordings.delete': deleteRecording_,
+    'audio.createUpload': createAudioUpload_,
+    'audio.complete': completeAudioUpload_,
+    'transcribe.segment': transcribeSegment_,
+    'transcript.correct': correctTranscript_,
+    'transcript.summarize': summarizeTranscript_
   };
 
   /**
@@ -1086,10 +1835,8 @@ var RptCore = (function () {
       else if (action === 'auth.requestCode') res = requestCode_(env, data);
       else if (action === 'auth.verifyCode') res = verifyCode_(env, data);
       else if (action === 'auth.logout') res = logout_(env, body.token);
-      else if (action === 'me') {
-        var c = ctxOf_(env, body.token);
-        res = { email: c.email, role: c.role, presets: RPT_PRESETS_, ranges: RPT_SETTING_RANGES_, layouts: RPT_LAYOUTS_, videoMaxMb: videoMaxMb_(env) };
-      } else if (isString_(action) && hasOwn_(ROUTES_, action)) res = ROUTES_[action](env, ctxOf_(env, body.token), data);
+      else if (action === 'me') res = meInfo_(env, ctxOf_(env, body.token));
+      else if (isString_(action) && hasOwn_(ROUTES_, action)) res = ROUTES_[action](env, ctxOf_(env, body.token), data);
       else fail_('BAD_INPUT', '未知的操作');
       res.ok = true;
       return res;
@@ -1139,7 +1886,11 @@ var RptCore = (function () {
     detectImageType: detectImageType,
     base64Size: base64Size_,
     sha256Hex: sha256HexPure_,
-    taipeiDay: taipeiDay_
+    taipeiDay: taipeiDay_,
+    DEFAULT_RULES: RPT_DEFAULT_RULES_,
+    AI_DEFAULTS: RPT_AI_DEFAULTS_,
+    applyReplacements: applyReplacements,
+    cleanRules: cleanRules_
   };
 })();
 

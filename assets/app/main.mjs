@@ -5,14 +5,16 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=8cfcdc23e6';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=8cfcdc23e6';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=8cfcdc23e6';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=8cfcdc23e6';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=8cfcdc23e6';
-import { buildPdf } from '../report/pdf.mjs?v=8cfcdc23e6';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=8cfcdc23e6';
-import { createTour } from './tour.mjs?v=8cfcdc23e6';
+import { ApiError, createApi, detectMode } from './api.mjs?v=dafa651415';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=dafa651415';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=dafa651415';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=dafa651415';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=dafa651415';
+import { buildPdf } from '../report/pdf.mjs?v=dafa651415';
+import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=dafa651415';
+import { createTour } from './tour.mjs?v=dafa651415';
+import { createPhotoLoader } from './photos.mjs?v=dafa651415';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=dafa651415';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -21,11 +23,17 @@ const autoDemo = mode === 'demo' && new URLSearchParams(location.search).get('de
 const md = createMarkdown(globalThis.markdownit);
 const Core = globalThis.RptCore;
 const api = createApi({ mode, config, onDemoMail: (to, code) => showDemoCode(to, code) });
-const state = { me: null, photoCache: new Map() };
+/** 舊版後端（version 2 以前）不認得的 action：前端自動退回舊的呼叫方式 */
+const isUnsupported = (e) => e instanceof ApiError && e.code === 'BAD_INPUT' && /未知的操作/.test(e.message);
+const photos = createPhotoLoader({ api, isUnsupported, persist: mode !== 'demo' });
+// 加速：行動頁資料（行動＋素材＋錄音）在切換頁籤時沿用 2 分鐘；首頁列表先顯示上次的再背景更新
+const ACTION_TTL = 2 * 60 * 1000;
+const state = { me: null, action: null, home: null, contacts: null };
 const tour = createTour({
   api,
   mode,
   getMe: () => state.me,
+  getActions: () => state.home?.list,
   go: (hash) => go(hash),
   // 示範模式每個分頁都從頭播放；正式使用記在這台裝置
   storage: mode === 'demo' ? sessionStorage : localStorage,
@@ -89,16 +97,67 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=8cfcdc23e6', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=dafa651415', import.meta.url))).text();
   return cssText;
 }
 
-async function photoDataUrl(actionId, photoId) {
-  if (state.photoCache.has(photoId)) return state.photoCache.get(photoId);
-  const res = await api.call('photos.get', { actionId, id: photoId });
-  const url = `data:${res.photo.mime};base64,${res.photo.data}`;
-  state.photoCache.set(photoId, url);
-  return url;
+/** 原圖（生成報導、A4 用） */
+const photoDataUrl = (actionId, photoId) => photos.get(actionId, photoId);
+/** 縮圖（列表用） */
+const photoThumbUrl = (actionId, photoId) => photos.get(actionId, photoId, { thumb: true });
+
+// ---------- 資料載入（合併查詢＋快取） ----------
+/** 首頁：boot 一次拿 me＋我的行動；舊版後端退回 me＋actions.list */
+async function fetchHome() {
+  let list;
+  try {
+    const r = await api.call('boot');
+    state.me = r.me;
+    list = r.actions;
+  } catch (e) {
+    if (!isUnsupported(e)) throw e;
+    if (!state.me) state.me = await api.call('me');
+    list = (await api.call('actions.list')).actions;
+  }
+  state.home = { list, at: Date.now(), fresh: true };
+  return list;
+}
+/** 行動頁：action.open 一次拿行動＋素材＋錄音（必要時含 me）；舊版後端退回 actions.list＋materials.list */
+async function fetchAction(id) {
+  let data;
+  try {
+    const r = await api.call('action.open', { actionId: id, withMe: !state.me });
+    if (r.me) state.me = r.me;
+    data = { action: r.action, materials: r.materials, recordings: r.recordings || [], legacy: false };
+  } catch (e) {
+    if (!isUnsupported(e)) throw e;
+    if (!state.me) state.me = await api.call('me');
+    const action = (await api.call('actions.list')).actions.find((a) => a.id === id);
+    if (!action) throw new ApiError('FORBIDDEN', '找不到這個行動，或您不是這個行動的協作者。');
+    data = { action, materials: (await api.call('materials.list', { actionId: id })).materials, recordings: [], legacy: true };
+  }
+  state.action = { id, data, at: Date.now() };
+  return data;
+}
+async function loadAction(id, { force = false } = {}) {
+  const c = state.action;
+  if (!force && c && c.id === id && Date.now() - c.at < ACTION_TTL) return c.data;
+  return fetchAction(id);
+}
+/** 資料改了：清掉快取，下次重新載入 */
+function invalidate() {
+  state.action = null;
+  if (state.home) state.home.fresh = false;
+}
+async function loadContacts() {
+  if (state.contacts) return state.contacts;
+  try {
+    state.contacts = (await api.call('contacts.list')).contacts;
+  } catch (e) {
+    if (!isUnsupported(e)) throw e;
+    state.contacts = [];
+  }
+  return state.contacts;
 }
 function loadImg(src) {
   return new Promise((resolve) => {
@@ -149,7 +208,10 @@ async function logout() {
   }
   api.setToken(null);
   state.me = null;
-  state.photoCache.clear();
+  state.action = null;
+  state.home = null;
+  state.contacts = null;
+  await photos.clear();
   tour.reset();
   go('#/');
 }
@@ -169,29 +231,35 @@ async function route() {
     renderBar();
     return renderLogin();
   }
+  const hash = location.hash || '#/';
+  const am = ACTION_ROUTE.exec(hash);
+  const isHome = hash === '#/' || hash === '#';
   if (!state.me) {
+    // 第一次載入：跟畫面資料一起拿 me（省一次 1 秒以上的往返）
+    fill(view, h('p', { text: '載入中…' }));
     try {
-      state.me = await api.call('me');
+      if (isHome) await fetchHome();
+      else if (am) await fetchAction(am[1]).catch(async (e) => {
+        if (e.code === 'AUTH_REQUIRED' || state.me) throw e;
+        state.me = await api.call('me'); // 行動打不開（例如不是協作者）：仍要知道我是誰，下面會顯示錯誤
+      });
+      else state.me = await api.call('me');
     } catch (err) {
-      if (err.code === 'AUTH_REQUIRED') {
-        renderBar();
-        return renderLogin();
-      }
       renderBar();
+      if (err.code === 'AUTH_REQUIRED') return renderLogin();
       fill(view, h('p', { class: 'errors', role: 'alert', text: errorText(err) }));
       return;
     }
   }
   renderBar();
   tour.maybeStart();
-  const hash = location.hash || '#/';
-  let m;
-  if (hash === '#/' || hash === '#') return renderHome();
+  if (isHome) return renderHome();
   if (hash === '#/new') return renderActionForm(null);
   if (hash === '#/admin') return renderAdmin();
-  if ((m = /^#\/a\/([A-Za-z0-9_-]+)(?:\/(materials|generate|outputs|members|settings))?$/.exec(hash))) return renderAction(m[1], m[2] || 'materials');
+  if (am) return renderAction(am[1], am[2] || 'materials');
   fill(view, h('p', { text: '找不到這個頁面。' }), h('a', { href: '#/', text: '回首頁' }));
 }
+const ACTION_ROUTE = /^#\/a\/([A-Za-z0-9_-]+)(?:\/(materials|generate|outputs|members|settings))?$/;
 
 // ---------- 登入 ----------
 function renderLogin() {
@@ -249,14 +317,32 @@ function renderLogin() {
 
 // ---------- 首頁：我的行動 ----------
 async function renderHome() {
-  fill(view, h('p', { text: '載入中…' }));
-  let list;
-  try {
-    list = (await api.call('actions.list')).actions;
-  } catch (e) {
-    fill(view, h('p', { class: 'errors', role: 'alert', text: errorText(e) }));
+  const cached = state.home;
+  if (cached) {
+    drawHome(cached.list);
+    // 這次進站剛用 boot 拿到的就不再重拿；否則背景更新，有變才重畫
+    if (cached.fresh) {
+      cached.fresh = false;
+      return;
+    }
+    try {
+      const fresh = await fetchHome();
+      state.home.fresh = false;
+      if (location.hash && location.hash !== '#/' && location.hash !== '#') return; // 已離開首頁
+      if (JSON.stringify(fresh) !== JSON.stringify(cached.list)) drawHome(fresh);
+    } catch {
+      /* 背景更新失敗：保留畫面 */
+    }
     return;
   }
+  fill(view, h('p', { text: '載入中…' }));
+  try {
+    drawHome(await fetchHome());
+  } catch (e) {
+    fill(view, h('p', { class: 'errors', role: 'alert', text: errorText(e) }));
+  }
+}
+function drawHome(list) {
   const isSuper = state.me.role === 'super';
   fill(view,
     h(
@@ -348,6 +434,118 @@ function settingsControls(initial) {
   };
 }
 
+// ---------- 協作者輸入（一列一位：email＋姓名選填；常用聯絡人點一下加入） ----------
+function contactChips({ exclude, onPick, testid = 'contact-chips' }) {
+  const box = h('div', { class: 'contact-chips', 'data-testid': testid });
+  const draw = () => {
+    const used = new Set(exclude());
+    const list = (state.contacts || []).filter((c) => !used.has(c.email));
+    fill(
+      box,
+      list.length
+        ? list.slice(0, 40).map((c) =>
+            h(
+              'span',
+              { class: 'chip-wrap' },
+              h('button', { type: 'button', class: 'pill contact-chip', 'data-contact': c.email, title: c.email, onclick: () => onPick(c) }, '＋ ', c.name ? h('b', { text: c.name }) : null, h('span', { class: 'chip-email', text: c.email })),
+              h('button', {
+                type: 'button',
+                class: 'chip-x',
+                'aria-label': `從常用聯絡人刪除 ${c.email}`,
+                title: '從常用聯絡人刪除',
+                text: '×',
+                onclick: async () => {
+                  if (!confirm(`從常用聯絡人刪除 ${c.name ? `${c.name}（${c.email}）` : c.email}？（不影響已加入的行動）`)) return;
+                  try {
+                    state.contacts = (await api.call('contacts.remove', { email: c.email })).contacts;
+                  } catch (e) {
+                    setStatus(errorText(e), 'error');
+                  }
+                  draw();
+                },
+              }),
+            ),
+          )
+        : h('span', { class: 'hint', text: (state.contacts || []).length ? '常用聯絡人都已加入。' : '加過的協作者會記在這裡，下次點一下就能加入。' }),
+    );
+  };
+  loadContacts().then(draw, () => draw());
+  draw();
+  return { el: box, draw };
+}
+
+function collaboratorEditor(initial = []) {
+  const rowsEl = h('div', { class: 'collab-rows', 'data-testid': 'collab-rows' });
+  const rows = [];
+  const current = () => rows.map((r) => ({ email: Core.normalizeEmail(r.em.value), name: r.nm.value.trim() })).filter((x) => x.email);
+  function addRow(email = '', name = '', focus = false) {
+    const em = h('input', { type: 'email', name: 'collab-email', placeholder: 'email', autocomplete: 'off', value: email, 'aria-label': '協作者 email' });
+    const nm = h('input', { name: 'collab-name', placeholder: '姓名（選填）', maxlength: 40, value: name, 'aria-label': '協作者姓名（選填）' });
+    const r = { em, nm };
+    r.row = h(
+      'div',
+      { class: 'collab-row' },
+      em,
+      nm,
+      h('button', {
+        type: 'button',
+        class: 'btn small',
+        text: '移除',
+        'aria-label': '移除這一列',
+        onclick: () => {
+          rows.splice(rows.indexOf(r), 1);
+          r.row.remove();
+          if (!rows.length) addRow();
+          chips.draw();
+        },
+      }),
+    );
+    em.addEventListener('change', () => chips.draw());
+    rows.push(r);
+    rowsEl.append(r.row);
+    if (focus) em.focus();
+  }
+  const chips = contactChips({
+    exclude: () => current().map((x) => x.email),
+    onPick: (c) => {
+      const empty = rows.find((r) => !r.em.value.trim());
+      if (empty) {
+        empty.em.value = c.email;
+        if (!empty.nm.value) empty.nm.value = c.name || '';
+      } else addRow(c.email, c.name || '');
+      chips.draw();
+    },
+  });
+  for (const x of initial) addRow(x.email, x.name);
+  if (!rows.length) addRow();
+  const el = h(
+    'div',
+    { class: 'collab-editor' },
+    rowsEl,
+    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn small', 'data-testid': 'add-collab-row', text: '＋ 再加一位', onclick: () => addRow('', '', true) })),
+    h('div', { class: 'contacts-box' }, h('span', { class: 'label', text: '常用聯絡人（點一下加入）' }), chips.el),
+  );
+  return {
+    el,
+    get: current,
+    /** 有錯回傳錯誤訊息，並把游標移到那一列 */
+    validate() {
+      for (const r of rows) {
+        const v = r.em.value.trim();
+        if (v && !Core.isValidEmail(Core.normalizeEmail(v))) {
+          r.em.focus();
+          return `協作者 email「${v}」格式不正確`;
+        }
+        if (!v && r.nm.value.trim()) {
+          r.em.focus();
+          return `請填寫「${r.nm.value.trim()}」的 email`;
+        }
+      }
+      return '';
+    },
+  };
+}
+
 // ---------- 建立／編輯行動 ----------
 function actionForm(action, onSubmit) {
   const isSuper = state.me.role === 'super';
@@ -358,9 +556,9 @@ function actionForm(action, onSubmit) {
     place: h('input', { name: 'place', maxlength: 100, value: a.place }),
     description: h('textarea', { name: 'description', class: 'short', rows: 3, maxlength: 2000, value: a.description }),
     owners: h('input', { name: 'owners', type: 'text', value: (a.owners || []).join(', '), disabled: !!action && !isSuper }),
-    collaborators: h('textarea', { name: 'collaborators', class: 'short', rows: 3, value: (a.collaborators || []).join('\n') }),
     openSubmission: h('input', { type: 'checkbox', name: 'openSubmission', checked: !!a.openSubmission }),
   };
+  const collabs = action ? null : collaboratorEditor();
   const settings = settingsControls(a.defaults);
   const err = h('p', { class: 'errors', role: 'alert' });
   // 負責人：建立者自動成為負責人；只有總管理者可以在行動設定裡更換
@@ -377,7 +575,15 @@ function actionForm(action, onSubmit) {
     field('說明', f.description),
     ownersField,
     // 協作者：建立時可先填；建立後改到「協作者」頁籤逐一新增／移除
-    action ? null : field('共同協作者 email（選填，一行一個或用逗號分隔）', f.collaborators, '名單上的人用 email 驗證碼登入後就能上傳素材；建立後也可以到「協作者」頁籤增減'),
+    action
+      ? null
+      : h(
+          'fieldset',
+          { class: 'field collaborators-field' },
+          h('legend', { class: 'label', text: '共同協作者（選填，一次一位；姓名選填，方便辨認）' }),
+          collabs.el,
+          h('span', { class: 'hint', text: '名單上的人用 email 驗證碼登入後就能上傳素材；建立後也可以到「協作者」頁籤增減。' }),
+        ),
     h('label', { class: 'field checkbox' }, f.openSubmission, h('span', { text: '開放任何登入者投稿（預設關閉）' })),
     h('h2', { text: '報導預設設定' }),
     settings.el,
@@ -395,7 +601,17 @@ function actionForm(action, onSubmit) {
       openSubmission: f.openSubmission.checked,
       defaults: settings.get(),
     };
-    if (!action) data.collaborators = f.collaborators.value;
+    if (!action) {
+      const bad = collabs.validate();
+      if (bad) {
+        err.textContent = bad;
+        return;
+      }
+      // email 陣列＋另送姓名：舊版後端（version 2）也看得懂 email 陣列
+      const list = collabs.get();
+      data.collaborators = list.map((x) => x.email);
+      data.collaboratorNames = Object.fromEntries(list.filter((x) => x.name).map((x) => [x.email, x.name]));
+    }
     // 相容舊版後端（version 1 建立時必填負責人 email）：送出自己的 email；
     // 新版後端一律以登入的 email 為負責人，一般使用者送來的 owners 會被忽略
     if (!action) data.owners = state.me.email;
@@ -425,6 +641,8 @@ function renderActionForm() {
         }
         throw e;
       }
+      invalidate();
+      state.contacts = null; // 後端已把協作者記進常用聯絡人
       setStatus(`已建立行動「${r.action.name}」`);
       go(`#/a/${r.action.id}`);
     }),
@@ -509,28 +727,121 @@ async function renderAdmin() {
       cfg,
     );
   };
-  fill(view, h('h1', { class: 'page-title', text: '總管理者名單' }), h('hr', { class: 'hairline' }), err, body);
+  const aiBox = h('section', { class: 'panel', 'data-testid': 'ai-config' });
+  const rulesBox = h('section', { class: 'panel', 'data-testid': 'global-rules' });
+  fill(view, h('h1', { class: 'page-title', text: '總管理者名單' }), h('hr', { class: 'hairline' }), err, body, aiBox, rulesBox);
   try {
     draw(await api.call('admin.list'));
   } catch (e) {
     err.textContent = errorText(e);
   }
+  renderAiConfig(aiBox);
+  renderGlobalRules(rulesBox);
+}
+
+/** OpenAI 金鑰與模型（錄音轉逐字稿、AI 修正與彙整）。金鑰只寫不讀：畫面只顯示末 4 碼 */
+async function renderAiConfig(box) {
+  const err = h('p', { class: 'errors', role: 'alert' });
+  const draw = (c) => {
+    const key = h('input', { type: 'password', name: 'openai-key', autocomplete: 'off', placeholder: c.hasKey ? `已設定（${c.keyHint}），要更換才填` : 'sk-…' });
+    const tm = h('input', { name: 'transcribe-model', value: c.transcribeModel, placeholder: c.defaults?.transcribeModel });
+    const cm = h('input', { name: 'chat-model', value: c.chatModel, placeholder: c.defaults?.chatModel });
+    const mb = h('input', { type: 'number', name: 'audio-max-mb', min: 1, max: 4000, value: String(c.audioMaxMb) });
+    const form = h(
+      'form',
+      { class: 'ai-form' },
+      field('OpenAI API 金鑰', key, c.fake ? '本機／示範模式使用模擬的 AI，不需要金鑰。' : '存在 Apps Script 的指令碼屬性（只有部署者看得到），不會傳到瀏覽器。'),
+      h('div', { class: 'row-2' }, field('轉錄模型', tm, `預設 ${c.defaults?.transcribeModel}；whisper-1、gpt-4o-transcribe 將於 2027-02-26 停用。`), field('AI 修正／彙整模型', cm, `預設 ${c.defaults?.chatModel}`)),
+      field('錄音檔存到 Drive 的大小上限（MB）', mb),
+      h(
+        'div',
+        { class: 'actions' },
+        h('button', { class: 'btn primary', type: 'submit', text: '儲存 AI 設定' }),
+        c.hasKey
+          ? h('button', {
+              class: 'btn danger',
+              type: 'button',
+              text: '刪除金鑰',
+              onclick: async () => {
+                if (!confirm('刪除 OpenAI 金鑰？刪除後無法自動轉錄、AI 修正與彙整。')) return;
+                try {
+                  draw(await api.call('ai.config.set', { clearKey: true }));
+                  state.me = null;
+                } catch (e) {
+                  err.textContent = errorText(e);
+                }
+              },
+            })
+          : null,
+      ),
+    );
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      err.textContent = '';
+      try {
+        const data = { transcribeModel: tm.value, chatModel: cm.value, audioMaxMb: Number(mb.value) };
+        if (key.value.trim()) data.apiKey = key.value.trim();
+        draw(await api.call('ai.config.set', data));
+        state.me = null; // 重新取得 me（AI 是否可用）
+        setStatus('已儲存 AI 設定');
+      } catch (e) {
+        err.textContent = errorText(e);
+      }
+    });
+    fill(box, h('h2', { text: 'OpenAI 設定（錄音轉逐字稿、AI 修正與彙整）' }), h('p', { 'data-testid': 'ai-status', class: 'hint', text: c.hasKey || c.fake ? '狀態：可以使用' : '狀態：尚未設定金鑰' }), form, err);
+  };
+  fill(box, h('p', { text: '載入中…' }));
+  try {
+    draw(await api.call('ai.config.get'));
+  } catch (e) {
+    fill(box, h('h2', { text: 'OpenAI 設定' }), h('p', { class: 'errors', text: isUnsupported(e) ? '後端尚未更新到 version 3，請重新發佈 Apps Script。' : errorText(e) }));
+  }
+}
+
+/** 全站逐字稿規則：每個行動都會套用；各行動負責人可在錄音區另外補充 */
+async function renderGlobalRules(box) {
+  const draw = (r) => {
+    const ed = rulesEditor(r.global, {
+      h,
+      field,
+      editable: true,
+      testid: 'global-rules-editor',
+      onSave: async (rules) => {
+        draw(await api.call('rules.set', { scope: 'global', rules }));
+        setStatus('已儲存全站逐字稿規則');
+      },
+      onReset: () => {
+        if (confirm('把全站規則恢復成預設值？（儲存後才生效）')) fill(box, title, rulesEditor(r.defaults, { h, field, editable: true, testid: 'global-rules-editor', onSave: async (rules) => draw(await api.call('rules.set', { scope: 'global', rules })) }).el);
+      },
+    });
+    fill(box, title, h('p', { class: 'hint', text: '轉錄、AI 修正與彙整都會用到；可以隨時增修。各行動的負責人另外可以在「素材」頁的錄音區加上只用在該行動的規則。' }), ed.el);
+  };
+  const title = h('h2', { text: '全站逐字稿規則' });
+  fill(box, title, h('p', { text: '載入中…' }));
+  try {
+    draw(await api.call('rules.get'));
+  } catch (e) {
+    fill(box, title, h('p', { class: 'errors', text: isUnsupported(e) ? '後端尚未更新到 version 3。' : errorText(e) }));
+  }
 }
 
 // ---------- 行動頁 ----------
-async function renderAction(id, tab) {
-  fill(view, h('p', { text: '載入中…' }));
+async function renderAction(id, tab, { force = false } = {}) {
+  // 切換頁籤時沿用剛載入的資料（不再每次重打兩次後端）
+  const c = state.action;
+  if (force || !c || c.id !== id || Date.now() - c.at >= ACTION_TTL) fill(view, h('p', { text: '載入中…' }));
   let action;
   let materials;
+  let data;
   try {
-    const list = (await api.call('actions.list')).actions;
-    action = list.find((a) => a.id === id);
-    if (!action) throw new ApiError('FORBIDDEN', '找不到這個行動，或您不是這個行動的協作者。');
-    materials = (await api.call('materials.list', { actionId: id })).materials;
+    data = await loadAction(id, { force });
+    ({ action, materials } = data);
   } catch (e) {
     fill(view, h('p', { class: 'errors', role: 'alert', 'data-testid': 'action-error', text: errorText(e) }), h('a', { href: '#/', text: '回我的行動' }));
     return;
   }
+  // 頁籤已經換了（使用者在載入中又點了別的）：交給新的那次 route
+  if (location.hash && ACTION_ROUTE.exec(location.hash)?.[1] !== id) return;
   const isManager = action.myRole === 'manager';
   const tabs = [
     ['materials', '素材'],
@@ -550,6 +861,8 @@ async function renderAction(id, tab) {
             if (!confirm(`確定退出「${action.name}」？您已上傳的素材會保留給負責人。`)) return;
             try {
               await api.call('actions.removeCollaborator', { actionId: id, email: state.me.email });
+              invalidate();
+              state.home = null;
               setStatus(`已退出「${action.name}」`);
               go('#/');
             } catch (e) {
@@ -580,8 +893,11 @@ async function renderAction(id, tab) {
     ),
     panel,
   );
-  const reload = () => renderAction(id, tab);
-  if (tab === 'materials') renderMaterials(panel, action, materials, reload);
+  const reload = () => {
+    invalidate();
+    return renderAction(id, tab, { force: true });
+  };
+  if (tab === 'materials') renderMaterials(panel, action, materials, reload, data);
   else if (tab === 'generate') renderGenerate(panel, action, materials);
   else if (tab === 'outputs') renderOutputs(panel, action);
   else if (tab === 'members' && isManager) renderMembers(panel, action);
@@ -600,38 +916,60 @@ async function renderAction(id, tab) {
 function renderMembers(panel, action) {
   const err = h('p', { class: 'errors', role: 'alert' });
   const body = h('div');
+  // 協作者名單改了：行動頁快取更新成新的名單（不必重新載入）
+  const remember = (a) => {
+    if (state.action && state.action.id === a.id) state.action.data.action = a;
+    if (state.home) state.home.fresh = false;
+  };
+  const addOne = async (a, email, name) => {
+    err.textContent = '';
+    try {
+      const r = await api.call('actions.addCollaborator', { actionId: a.id, email, name });
+      state.contacts = null;
+      await loadContacts().catch(() => {});
+      setStatus(`已新增協作者 ${name ? `${name}（${Core.normalizeEmail(email)}）` : Core.normalizeEmail(email)}`);
+      remember(r.action);
+      draw(r.action);
+      return true;
+    } catch (e) {
+      err.textContent = errorText(e);
+      return false;
+    }
+  };
   const draw = (a) => {
+    const names = a.collaboratorNames || {};
     const email = h('input', { type: 'email', name: 'collaborator-email', required: true, autocomplete: 'off', placeholder: 'name@example.com' });
+    const name = h('input', { name: 'collaborator-name', maxlength: 40, placeholder: '姓名（選填）' });
     const add = h(
       'form',
-      { class: 'inline-form', 'data-testid': 'add-collaborator' },
+      { class: 'inline-form add-collaborator', 'data-testid': 'add-collaborator' },
       field('新增共同協作者 email', email, '對方用這個 email 收驗證碼登入後，「我的行動」就會出現這個行動，可以上傳並編輯自己的素材。'),
+      field('姓名（選填，方便辨認）', name),
       h('button', { class: 'btn primary', type: 'submit', text: '新增' }),
     );
     add.addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      err.textContent = '';
-      try {
-        const r = await api.call('actions.addCollaborator', { actionId: a.id, email: email.value });
-        setStatus(`已新增協作者 ${Core.normalizeEmail(email.value)}`);
-        draw(r.action);
-      } catch (e) {
-        err.textContent = errorText(e);
-      }
+      await addOne(a, email.value, name.value.trim());
+    });
+    const chips = contactChips({
+      testid: 'member-contact-chips',
+      exclude: () => [...(a.owners || []), ...(a.collaborators || [])],
+      onPick: (c) => addOne(a, c.email, c.name || ''),
     });
     const rows = [
-      ...(a.owners || []).map((e) => ({ email: e, owner: true })),
-      ...(a.collaborators || []).map((e) => ({ email: e, owner: false })),
+      ...(a.owners || []).map((e) => ({ email: e, owner: true, name: e === state.me.email ? '（我）' : '' })),
+      ...(a.collaborators || []).map((e) => ({ email: e, owner: false, name: names[e] || '' })),
     ];
     fill(body,
       add,
+      h('div', { class: 'contacts-box' }, h('span', { class: 'label', text: '常用聯絡人（點一下直接加入這個行動）' }), chips.el),
       h(
         'div',
         { class: 'table-scroll' },
         h(
           'table',
           { class: 'table', 'data-testid': 'members-table' },
-          h('thead', {}, h('tr', {}, h('th', { text: 'Email' }), h('th', { text: '權限' }), h('th', { text: '' }))),
+          h('thead', {}, h('tr', {}, h('th', { text: '姓名' }), h('th', { text: 'Email' }), h('th', { text: '權限' }), h('th', { text: '' }))),
           h(
             'tbody',
             {},
@@ -639,29 +977,45 @@ function renderMembers(panel, action) {
               h(
                 'tr',
                 {},
+                h('td', { 'data-testid': 'member-name', text: r.name }),
                 h('td', { text: r.email }),
                 h('td', { text: r.owner ? '負責人（管理行動與協作者）' : '共同協作者（上傳、編輯自己的素材）' }),
                 h(
                   'td',
-                  {},
+                  { class: 'row-actions' },
                   r.owner
                     ? h('span', { class: 'hint', text: '負責人' })
-                    : h('button', {
-                        class: 'btn small danger',
-                        type: 'button',
-                        text: '移除',
-                        'aria-label': `移除 ${r.email}`,
-                        onclick: async () => {
-                          if (!confirm(`確定移除協作者 ${r.email}？對方已上傳的素材會保留。`)) return;
-                          err.textContent = '';
-                          try {
-                            draw((await api.call('actions.removeCollaborator', { actionId: a.id, email: r.email })).action);
-                            setStatus(`已移除協作者 ${r.email}`);
-                          } catch (e) {
-                            err.textContent = errorText(e);
-                          }
-                        },
-                      }),
+                    : [
+                        h('button', {
+                          class: 'btn small',
+                          type: 'button',
+                          text: '改姓名',
+                          'aria-label': `修改 ${r.email} 的姓名`,
+                          onclick: async () => {
+                            const n = prompt(`${r.email} 的姓名（選填）`, r.name);
+                            if (n == null || !n.trim()) return;
+                            await addOne(a, r.email, n.trim());
+                          },
+                        }),
+                        h('button', {
+                          class: 'btn small danger',
+                          type: 'button',
+                          text: '移除',
+                          'aria-label': `移除 ${r.email}`,
+                          onclick: async () => {
+                            if (!confirm(`確定移除協作者 ${r.name ? `${r.name}（${r.email}）` : r.email}？對方已上傳的素材會保留。`)) return;
+                            err.textContent = '';
+                            try {
+                              const next = (await api.call('actions.removeCollaborator', { actionId: a.id, email: r.email })).action;
+                              remember(next);
+                              draw(next);
+                              setStatus(`已移除協作者 ${r.email}`);
+                            } catch (e) {
+                              err.textContent = errorText(e);
+                            }
+                          },
+                        }),
+                      ],
                 ),
               ),
             ),
@@ -681,7 +1035,7 @@ function draftKey(actionId) {
   return `rpt.draft.${mode}.${actionId}`;
 }
 
-function renderMaterials(panel, action, materials, reload) {
+function renderMaterials(panel, action, materials, reload, data = {}) {
   const err = h('p', { class: 'errors', role: 'alert' });
   const form = { id: null, photos: [], videos: [] };
   const kind = h('select', { name: 'kind' }, h('option', { value: 'report', text: '報導' }), h('option', { value: 'testimony', text: '見證' }));
@@ -712,7 +1066,7 @@ function renderMaterials(panel, action, materials, reload) {
     fill(photoList, 
       ...form.photos.map((p, i) => {
         const img = h('img', { alt: '', loading: 'lazy' });
-        photoDataUrl(action.id, p.id).then((u) => (img.src = u)).catch(() => {});
+        photoThumbUrl(action.id, p.id).then((u) => (img.src = u)).catch(() => {});
         const cap = h('input', { name: 'caption', maxlength: 300, placeholder: '圖說（選填，有圖說的照片會優先選用）', value: p.caption, oninput: (e) => (p.caption = e.target.value) });
         const cover = h('input', {
           type: 'radio',
@@ -786,7 +1140,7 @@ function renderMaterials(panel, action, materials, reload) {
         setStatus(`處理照片 ${file.name}…`);
         const r = await resizePhoto(file);
         const up = await api.call('photos.upload', { actionId: action.id, data: r.base64 });
-        state.photoCache.set(up.photo.id, `data:image/jpeg;base64,${r.base64}`);
+        photos.put(up.photo.id, `data:image/jpeg;base64,${r.base64}`);
         form.photos.push({ id: up.photo.id, caption: '', cover: !form.photos.length });
         drawPhotos();
         setStatus(`已上傳照片（${Math.round(r.bytes / 1024)} KB）`);
@@ -831,7 +1185,7 @@ function renderMaterials(panel, action, materials, reload) {
       if (frame) {
         const up = await api.call('photos.upload', { actionId: action.id, data: frame });
         coverPhotoId = up.photo.id;
-        state.photoCache.set(coverPhotoId, `data:image/jpeg;base64,${frame}`);
+        photos.put(coverPhotoId, `data:image/jpeg;base64,${frame}`);
       }
       setStatus('上傳影片中…');
       const sess = await api.call('video.createUpload', { actionId: action.id, name: file.name, mime: file.type || 'video/mp4', size: file.size, origin: location.origin });
@@ -892,7 +1246,7 @@ function renderMaterials(panel, action, materials, reload) {
           const thumbs = h('div', { class: 'thumbs' });
           for (const p of m.photos) {
             const img = h('img', { alt: p.caption || '', loading: 'lazy', 'data-photo': p.id });
-            photoDataUrl(action.id, p.id).then((u) => (img.src = u)).catch(() => {});
+            photoThumbUrl(action.id, p.id).then((u) => (img.src = u)).catch(() => {});
             thumbs.append(img);
           }
           return h(
@@ -937,7 +1291,23 @@ function renderMaterials(panel, action, materials, reload) {
       : h('p', { class: 'empty', text: '還沒有素材，用上面的表單上傳第一篇報導或見證吧！' }),
   );
   resetForm();
-  fill(panel, editor, h('h2', { class: 'section-title', text: `已上傳的素材（${materials.length}）` }), list);
+  const recordings = renderRecordings({
+    h,
+    fill,
+    field,
+    api,
+    Core,
+    state,
+    action,
+    recordings: data.recordings || [],
+    legacy: !!data.legacy,
+    setStatus,
+    errorText,
+    reload,
+    download,
+    safeFileName,
+  });
+  fill(panel, editor, recordings, h('h2', { class: 'section-title', text: `已上傳的素材（${materials.length}）` }), list);
 }
 
 // ---------- 生成報導 ----------

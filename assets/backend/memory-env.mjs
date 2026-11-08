@@ -9,7 +9,35 @@ function randomHexDefault(nBytes) {
 }
 
 function emptyState() {
-  return { props: {}, cache: {}, actions: {}, materials: {}, files: {}, outputs: {}, uploads: {} };
+  return { props: {}, cache: {}, actions: {}, materials: {}, files: {}, outputs: {}, uploads: {}, docs: {} };
+}
+
+/**
+ * 假 AI（mock server、示範模式、測試用）：不連網、結果固定，方便檢查流程。
+ * 轉錄結果故意含錯字「招會」，用來驗證替換規則與 AI 修正。
+ */
+export function createFakeAi() {
+  const calls = [];
+  return {
+    fake: true,
+    calls,
+    transcribe(o) {
+      calls.push({ kind: 'transcribe', model: o.model, prompt: o.prompt, bytes: Math.floor((o.base64.length * 3) / 4), index: o.segmentIndex });
+      return { text: `第${o.segmentIndex + 1}段：今天在招會的福音行動，弟兄姊妹一同出去傳揚福音` };
+    },
+    chat(o) {
+      calls.push({ kind: 'chat', task: o.task, model: o.model, chars: o.user.length });
+      if (o.task === 'summarize') {
+        const n = (o.user.match(/第\d+段/g) || []).length;
+        return `## 行動概要\n- 共 ${n} 段錄音內容\n## 重點\n- 弟兄姊妹一同出去傳揚福音\n- 在招會的福音行動中有新人得救`;
+      }
+      // 修正：加上句號（替換規則由後端再套用一次）
+      return o.user
+        .split('\n')
+        .map((l) => (l && !/[。！？]$/.test(l) ? `${l}。` : l))
+        .join('\n');
+    },
+  };
 }
 
 /**
@@ -70,13 +98,34 @@ export function createMemoryEnv(opts = {}) {
       changed();
       return id;
     },
-    getFile(aid, id, withData) {
+    getFile(aid, id, withData, opts) {
       const f = state.files[aid]?.[id];
       if (!f) return null;
       const out = { id, name: f.name, mime: f.mime, size: f.size, meta: structuredClone(f.meta || {}) };
       if (withData) out.base64 = f.base64 || '';
+      // 正式環境的縮圖由 Drive 產生；記憶體版直接回原圖（thumb=false 讓前端知道不是縮圖）
+      if (withData && opts && opts.thumb) out.thumb = false;
       return out;
     },
+    // 設定文件（逐字稿規則、錄音紀錄…）：aid 為 null 時是全站
+    getDoc: (aid, key) => {
+      const d = state.docs[aid || '_global']?.[key];
+      return d ? structuredClone(d) : null;
+    },
+    putDoc(aid, key, obj) {
+      const k = aid || '_global';
+      if (!state.docs[k]) state.docs[k] = {};
+      state.docs[k][key] = structuredClone(obj);
+      changed();
+    },
+    deleteDoc(aid, key) {
+      if (state.docs[aid || '_global']) delete state.docs[aid || '_global'][key];
+      changed();
+    },
+    listDocs: (aid, prefix) =>
+      Object.entries(state.docs[aid || '_global'] || {})
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([, v]) => structuredClone(v)),
     setFileMeta(aid, id, meta) {
       if (state.files[aid]?.[id]) state.files[aid][id].meta = structuredClone(meta);
       changed();
@@ -135,6 +184,8 @@ export function createMemoryEnv(opts = {}) {
     sendMail: (to, subject, body) => (opts.sendMail ? opts.sendMail(to, subject, body) : undefined),
     deployerEmail: () => opts.deployer || '',
     log: (msg) => (opts.log ? opts.log(msg) : undefined),
+    // opts.ai === false：模擬「尚未設定 OpenAI 金鑰」
+    ai: opts.ai === false ? null : opts.ai || createFakeAi(),
     store,
   };
 

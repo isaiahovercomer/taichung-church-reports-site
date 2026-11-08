@@ -6,7 +6,7 @@
 // ★ 以後新增功能時：在 STEPS 加步驟，並把該步驟的 since 設成新的版本號、TOUR_VERSION 加 1。
 //   看過舊版教學的人下次登入會收到「教學有新步驟」提示，只播放新步驟。
 
-export const TOUR_VERSION = 2;
+export const TOUR_VERSION = 3;
 export const TOUR_KEY = 'rpt.tour';
 
 // track：'all' 所有人、'collab' 只給共同協作者、'manager' 負責人（含總管理者）
@@ -18,8 +18,8 @@ export const STEPS = [
     title: '登入與登出', text: '您是用 email 收到的 6 位數驗證碼登入，不需要密碼。這裡顯示目前登入的 email，用完可按「登出」。' },
   { id: 'new-action', since: 2, track: 'all', view: 'home', target: 'a[href="#/new"]',
     title: '建立新行動', text: '任何人登入後都可以建立自己的行動（例如福音出訪、特會），不需要管理員事先允許。建立的人就是這個行動的負責人，素材和報導都歸在這個行動底下。' },
-  { id: 'action-collabs', since: 2, track: 'manager', view: 'new', target: '[data-testid=action-form] textarea[name=collaborators]',
-    title: '先邀請協作者（選填）', text: '建立時可以先填共同協作者的 email，一行一個或用逗號分隔；之後也能在「協作者」頁籤增減。也可以勾選「開放任何登入者投稿」。' },
+  { id: 'action-collabs', since: 2, track: 'manager', view: 'new', target: '[data-testid=action-form] [data-testid=collab-rows]',
+    title: '先邀請協作者（選填）', text: '一列填一位共同協作者的 email，姓名選填（方便辨認）；按「＋ 再加一位」加下一位。加過的人會記在「常用聯絡人」，下次點一下就能加入。之後也能在「協作者」頁籤增減。也可以勾選「開放任何登入者投稿」。' },
   { id: 'action-list', since: 2, track: 'all', view: 'home', target: '[data-testid=action-list]',
     title: '我的行動', text: '這裡列出您建立的行動（負責人）和被加入的行動（共同協作者），點一下卡片就能進入。' },
   { id: 'collab-role', since: 2, track: 'collab', view: 'materials', target: '[data-testid=my-role]',
@@ -34,6 +34,8 @@ export const STEPS = [
     title: '上傳影片', text: '建議先把影片上傳到 YouTube 並設為「不公開」，再把連結貼在這裡，最省空間也最穩定。也可以直接上傳小影片檔。' },
   { id: 'submit-material', since: 1, track: 'all', view: 'materials', target: '[data-testid=material-form] button[type=submit]',
     title: '送出素材', text: '填好後按「送出素材」，就會存到這個行動。' },
+  { id: 'recordings', since: 3, track: 'all', view: 'materials', target: '[data-testid=recordings] input[name=audio-file]',
+    title: '行動錄音轉逐字稿', text: '選整場行動的錄音檔（最長可到 150 分鐘以上）按「開始轉逐字稿」，系統會自動切段轉成逐字稿；再按「AI 修正」「AI 彙整重點」，最後「重點加入素材」，生成報導時就會用到。轉錄期間請保持頁面開啟，中斷了重新選同一個檔案就能接著轉。' },
   { id: 'my-materials', since: 1, track: 'all', view: 'materials', target: '[data-testid=material-list], [data-testid=material-form] ~ h2',
     title: '編輯／刪除素材', text: '已上傳的素材列在這裡，可以按「編輯」修改或「刪除」。共同協作者只能改刪自己上傳的；負責人可以管理所有素材。' },
   { id: 'gen-words', since: 1, track: 'manager', view: 'generate', target: '[data-testid=settings] input[name=words]',
@@ -49,7 +51,7 @@ export const STEPS = [
   { id: 'gen-a4', since: 1, track: 'manager', view: 'generate', target: '[data-testid=gen-a4]',
     title: '一鍵生成 A4 圖檔／PDF', text: '產生 A4 圖檔，可逐頁下載圖片，或按旁邊的「下載 PDF」得到整份 PDF。' },
   { id: 'members', since: 2, track: 'manager', view: 'members', target: '[data-testid=add-collaborator] input[name=collaborator-email]',
-    title: '新增／移除共同協作者', text: '在「協作者」頁籤輸入對方的 email 按「新增」，再把行動網址傳給對方；對方登入後就能上傳並編輯自己的素材。名單上每位協作者都可以按「移除」，已上傳的素材會保留。' },
+    title: '新增／移除共同協作者', text: '在「協作者」頁籤輸入對方的 email（姓名選填）按「新增」，或直接點「常用聯絡人」加入，再把行動網址傳給對方；對方登入後就能上傳並編輯自己的素材。名單上每位協作者都可以按「移除」，已上傳的素材會保留。' },
   { id: 'action-settings', since: 2, track: 'manager', view: 'settings', target: '[data-testid=action-form] input[name=name]',
     title: '行動設定', text: '「行動設定」頁籤可以修改行動名稱、日期、地點與報導預設值，只有負責人看得到。' },
   { id: 'done', since: 1, track: 'all', view: 'home', target: '[data-testid=tour-replay]',
@@ -109,7 +111,7 @@ const EDGE = 12;
 const WAIT = 4000;
 
 /**
- * hooks: { api, getMe, go, mode, storage, defaults }
+ * hooks: { api, getMe, getActions?, go, mode, storage, defaults }
  */
 export function createTour(hooks) {
   let ui = null;
@@ -132,6 +134,9 @@ export function createTour(hooks) {
   };
 
   async function listActions() {
+    // 首頁剛載入過的列表就直接用（省一次後端往返）
+    const cached = hooks.getActions && hooks.getActions();
+    if (cached) return cached;
     try {
       return (await hooks.api.call('actions.list')).actions || [];
     } catch {
@@ -321,6 +326,8 @@ export function createTour(hooks) {
     if (checked || active) return;
     checked = true;
     const seen = readSeen(hooks.storage);
+    // 看過目前版本、而且已經是負責人教學：不會再提示，不必查「我的行動」（省一次後端往返）
+    if (seen && seen.v >= TOUR_VERSION && seen.track === 'manager') return;
     // 沒看過就直接播（start 會自己判斷角色）；看過的人才需要先查「我的行動」判斷角色有沒有變
     const guessTrack = seen ? trackFor(hooks.getMe(), await listActions()) : 'collab';
     if (active || !checked || !hooks.getMe()) return; // 等待期間已開始教學或已登出

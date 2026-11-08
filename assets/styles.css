@@ -1547,3 +1547,232 @@ progress {
     transition: none;
   }
 }
+
+/* ---------- v3：協作者分列輸入、常用聯絡人 ---------- */
+.collab-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.collab-row {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.collab-row input {
+  min-width: 0;
+}
+
+.collab-editor .actions {
+  margin: 8px 0 4px;
+}
+
+.contacts-box {
+  margin: 6px 0 14px;
+}
+
+.contacts-box > .label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.contact-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.chip-wrap:hover {
+  border-color: var(--gold-light);
+}
+
+.contact-chip {
+  font: inherit;
+  font-size: 13px;
+  border: 0;
+  border-radius: 0;
+  padding: 6px 4px 6px 12px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+  max-width: 260px;
+}
+
+.contact-chip b {
+  font-weight: 600;
+}
+
+.chip-email {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-x {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px 0 6px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.chip-x:hover {
+  color: #b42318;
+}
+
+.row-actions {
+  white-space: nowrap;
+}
+
+.row-actions .btn + .btn {
+  margin-left: 6px;
+}
+
+/* ---------- v3：行動錄音與逐字稿 ---------- */
+.recordings {
+  margin: 18px 0;
+}
+
+.recordings h2 {
+  margin-top: 0;
+}
+
+.notice {
+  font-size: 14px;
+  background: #fbf6ea;
+  border: 1px solid var(--gold-light);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.transcribe-progress {
+  background: #fbfaf6;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 10px 0;
+  font-size: 14px;
+}
+
+.transcribe-progress progress {
+  margin: 6px 0;
+}
+
+.transcribe-progress .hint {
+  display: block;
+  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.paste-transcript,
+.rules-box {
+  margin: 12px 0;
+}
+
+.paste-transcript > summary,
+.rules-box > summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--link);
+  padding: 6px 0;
+}
+
+.recording-list {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.recording-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.recording-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.recording-head .hint {
+  font-variant-numeric: tabular-nums;
+}
+
+.recording-detail {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+textarea.transcript {
+  font-size: 14px;
+  line-height: 1.8;
+  min-height: 12em;
+}
+
+.rules-editor {
+  margin-top: 8px;
+}
+
+.rep-rows {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.rep-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.rep-row input {
+  min-width: 0;
+}
+
+.rep-row .arrow {
+  color: var(--muted);
+}
+
+@media (max-width: 479px) {
+  .collab-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .collab-row input[name='collab-name'] {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .collab-row .btn {
+    grid-row: 1 / span 2;
+  }
+}
+
+.table td[data-testid='member-name'] {
+  white-space: nowrap;
+}

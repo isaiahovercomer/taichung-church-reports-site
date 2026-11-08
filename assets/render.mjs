@@ -4,8 +4,8 @@
 // 安全原則：所有使用者欄位（標題、作者…）一律經 escapeHtml；
 // 內文只經 markdown-it（html:false），圖片只接受安全檔名，連結只接受 https/http/mailto/相對路徑。
 
-import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=8cfcdc23e6';
-import { LOGO_DATA_URL } from './brand.mjs?v=8cfcdc23e6';
+import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=dafa651415';
+import { LOGO_DATA_URL } from './brand.mjs?v=dafa651415';
 
 export const SITE_NAME = '台中市召會';
 export const SITE_NAME_EN = 'THE CHURCH IN TAICHUNG';
@@ -290,6 +290,8 @@ export function renderPage(opts) {
     `<meta name="viewport" content="width=device-width, initial-scale=1">`,
     `<meta http-equiv="Content-Security-Policy" content="${e(opts.csp || SITE_CSP)}">`,
     `<meta name="referrer" content="strict-origin-when-cross-origin">`,
+    // 協作平台：先告訴瀏覽器所有要用的模組，一次平行下載（不必等 import 一層層發現）
+    ...(opts.modulePreload || []).map((s) => `<link rel="modulepreload" href="${e(s)}">`),
     `<title>${e(opts.title)}</title>`,
     opts.description ? `<meta name="description" content="${e(opts.description)}">` : '',
     isHttpsUrl(opts.canonical) ? `<link rel="canonical" href="${e(opts.canonical)}">` : '',
