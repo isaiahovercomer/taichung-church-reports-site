@@ -4,8 +4,8 @@
 // 安全原則：所有使用者欄位（標題、作者…）一律經 escapeHtml；
 // 內文只經 markdown-it（html:false），圖片只接受安全檔名，連結只接受 https/http/mailto/相對路徑。
 
-import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=cd677604a4';
-import { LOGO_DATA_URL } from './brand.mjs?v=cd677604a4';
+import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=8cfcdc23e6';
+import { LOGO_DATA_URL } from './brand.mjs?v=8cfcdc23e6';
 
 export const SITE_NAME = '台中市召會';
 export const SITE_NAME_EN = 'THE CHURCH IN TAICHUNG';

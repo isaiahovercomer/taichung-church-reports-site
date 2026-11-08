@@ -5,14 +5,14 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=cd677604a4';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=cd677604a4';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=cd677604a4';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=cd677604a4';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=cd677604a4';
-import { buildPdf } from '../report/pdf.mjs?v=cd677604a4';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=cd677604a4';
-import { createTour } from './tour.mjs?v=cd677604a4';
+import { ApiError, createApi, detectMode } from './api.mjs?v=8cfcdc23e6';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=8cfcdc23e6';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=8cfcdc23e6';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=8cfcdc23e6';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=8cfcdc23e6';
+import { buildPdf } from '../report/pdf.mjs?v=8cfcdc23e6';
+import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=8cfcdc23e6';
+import { createTour } from './tour.mjs?v=8cfcdc23e6';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -89,7 +89,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=cd677604a4', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=8cfcdc23e6', import.meta.url))).text();
   return cssText;
 }
 
@@ -396,6 +396,9 @@ function actionForm(action, onSubmit) {
       defaults: settings.get(),
     };
     if (!action) data.collaborators = f.collaborators.value;
+    // 相容舊版後端（version 1 建立時必填負責人 email）：送出自己的 email；
+    // 新版後端一律以登入的 email 為負責人，一般使用者送來的 owners 會被忽略
+    if (!action) data.owners = state.me.email;
     if (action && isSuper) data.owners = f.owners.value;
     try {
       await onSubmit(data);
@@ -411,7 +414,17 @@ function renderActionForm() {
     h('h1', { class: 'page-title', text: '建立新行動' }),
     h('hr', { class: 'hairline' }),
     actionForm(null, async (data) => {
-      const r = await api.call('actions.create', data);
+      let r;
+      try {
+        r = await api.call('actions.create', data);
+      } catch (e) {
+        // 舊版後端（version 1）只有總管理者能建立行動：提示需要重新發佈 Apps Script
+        if (e instanceof ApiError && (e.code === 'FORBIDDEN' || e.code === 'BAD_INPUT')) {
+          const ping = await api.call('ping').catch(() => null);
+          if (ping && Number(ping.version) < 2) throw new ApiError(e.code, `${e.message}（後端仍是舊版 version ${ping.version}，請管理者重新發佈 Apps Script 至 version 2 以上）`);
+        }
+        throw e;
+      }
       setStatus(`已建立行動「${r.action.name}」`);
       go(`#/a/${r.action.id}`);
     }),
