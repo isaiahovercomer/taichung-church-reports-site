@@ -666,6 +666,7 @@ var RptCore = (function () {
       id: a.id,
       name: a.name,
       date: a.date,
+      endDate: a.endDate || '',
       place: a.place,
       description: a.description,
       openSubmission: !!a.openSubmission,
@@ -741,6 +742,14 @@ var RptCore = (function () {
     out.name = str_(data.name, '行動名稱', 100, true);
     out.date = str_(data.date, '日期', 10, true);
     if (!isValidDate_(out.date)) fail_('BAD_INPUT', '日期格式需為 YYYY-MM-DD');
+    // 結束日期（選填）：多天的行動；空白或與開始日期相同＝單日
+    out.endDate = str_(data.endDate == null ? '' : data.endDate, '結束日期', 10, false);
+    if (out.endDate) {
+      if (!isValidDate_(out.endDate)) fail_('BAD_INPUT', '結束日期格式需為 YYYY-MM-DD');
+      if (out.endDate < out.date) fail_('BAD_INPUT', '結束日期不能早於開始日期');
+      if (Date.parse(out.endDate) - Date.parse(out.date) > 366 * 86400000) fail_('BAD_INPUT', '行動期間最長一年');
+      if (out.endDate === out.date) out.endDate = '';
+    }
     out.place = str_(data.place, '地點', 100, false);
     out.description = str_(data.description, '說明', 2000, false);
     // 一般使用者送來的 owners 一律忽略（建立者就是負責人）；只有總管理者可以指定或更換負責人
@@ -770,14 +779,77 @@ var RptCore = (function () {
     }
     if (n >= limits_(env).actionsPerUserPerDay) fail_('RATE_LIMITED', '今天建立的行動已達上限（' + limits_(env).actionsPerUserPerDay + ' 個），請明天再建立');
   }
+  /** 行動名稱比對用：去掉空白、全形半形空白，不分大小寫 */
+  function sameName_(x, y) {
+    var n = function (s) {
+      return String(s || '').replace(/[\s\u3000]+/g, '').toLowerCase();
+    };
+    return n(x) === n(y);
+  }
+  /** 同一個人已建立的「同名、同開始日期」行動（避免連點或重填造成重複） */
+  function findDuplicate_(env, ctx, f) {
+    var all = env.store.listActions();
+    for (var i = 0; i < all.length; i++) {
+      var a = all[i];
+      if (a.createdBy === ctx.email && a.date === f.date && sameName_(a.name, f.name) && canManage_(ctx, a)) return a;
+    }
+    return null;
+  }
+  /** 重複建立時改成更新原本那一筆：有填的欄位覆蓋、協作者合併（不會少人） */
+  function mergeIntoExisting_(env, ctx, a, f) {
+    if (f.endDate) a.endDate = f.endDate;
+    if (f.place) a.place = f.place;
+    if (f.description) a.description = f.description;
+    if (f.openSubmission) a.openSubmission = true;
+    var list = (a.collaborators || []).slice();
+    var add = collaboratorsFor_(f.collaborators || [], a.owners || []);
+    for (var i = 0; i < add.length; i++) if (!arrayIncludes_(list, add[i]) && list.length < RPT_MAX_COLLABORATORS_) list.push(add[i]);
+    a.collaborators = list;
+    var names = namesFor_(a.collaboratorNames, list);
+    for (var k in f.collaboratorNames || {}) if (hasOwn_(f.collaboratorNames, k) && arrayIncludes_(list, k)) names[k] = f.collaboratorNames[k];
+    a.collaboratorNames = names;
+    a.updatedAt = new Date(env.now()).toISOString();
+    env.store.updateAction(a);
+    return a;
+  }
   function createAction_(env, ctx, data) {
-    var f = actionFields_(data || {}, true, ctx.role === 'super');
+    data = data || {};
+    var f = actionFields_(data, true, ctx.role === 'super');
+    // 同一次送出（網路重送、連點）只建立一次：前端每次按下「建立行動」產生一個 requestId
+    var reqKey = null;
+    if (data.requestId != null) {
+      var rid = str_(data.requestId, 'requestId', 64, false);
+      if (rid && !/^[A-Za-z0-9_-]{8,64}$/.test(rid)) fail_('BAD_INPUT', 'requestId 格式不正確');
+      if (rid) reqKey = 'RPT_CREQ_' + emailKey_(env, ctx.email) + '_' + rid;
+    }
     var owners = f.owners || [ctx.email];
     var now = new Date(env.now()).toISOString();
+    var result = null;
+    env.withLock(function () {
+      if (reqKey) {
+        var prevId = env.cache.get(reqKey);
+        var prev = prevId ? env.store.getAction(prevId) : null;
+        if (prev) {
+          result = { action: publicAction_(ctx, prev), duplicate: 'request' };
+          return;
+        }
+      }
+      var dup = findDuplicate_(env, ctx, f);
+      if (dup) {
+        dup = mergeIntoExisting_(env, ctx, dup, f);
+        if (reqKey) env.cache.put(reqKey, dup.id, 600);
+        result = { action: publicAction_(ctx, dup), duplicate: 'merged' };
+      }
+    });
+    if (result) {
+      if (result.duplicate === 'merged') rememberContacts_(env, ctx.email, result.action.collaborators || [], f.collaboratorNames);
+      return result;
+    }
     var a = {
       id: newId_(env, 'a'),
       name: f.name,
       date: f.date,
+      endDate: f.endDate,
       place: f.place,
       description: f.description,
       owners: owners,
@@ -790,11 +862,31 @@ var RptCore = (function () {
     };
     a.collaboratorNames = namesFor_(f.collaboratorNames, a.collaborators);
     env.withLock(function () {
+      // 鎖內再查一次：兩個請求同時送到時，只有第一個會建立
+      var dup = findDuplicate_(env, ctx, f);
+      if (dup) {
+        result = { action: publicAction_(ctx, mergeIntoExisting_(env, ctx, dup, f)), duplicate: 'merged' };
+        return;
+      }
       checkCreateQuota_(env, ctx);
       env.store.createAction(a);
+      if (reqKey) env.cache.put(reqKey, a.id, 600);
     });
+    if (result) return result;
     rememberContacts_(env, ctx.email, a.collaborators, a.collaboratorNames);
     return { action: publicAction_(ctx, a) };
+  }
+  /** 刪除行動：負責人或總管理者；Drive 資料夾（含素材試算表、照片、影片、錄音）移到垃圾桶，30 天內可救回 */
+  function deleteAction_(env, ctx, data) {
+    data = data || {};
+    var a = loadAction_(env, ctx, data.id);
+    if (!canManage_(ctx, a)) fail_('FORBIDDEN', '只有這個行動的負責人可以刪除行動');
+    // 防誤刪：要送出行動名稱確認
+    if (!sameName_(data.confirmName, a.name)) fail_('BAD_INPUT', '請輸入正確的行動名稱以確認刪除');
+    env.withLock(function () {
+      env.store.deleteAction(a.id);
+    });
+    return { deleted: true, id: a.id };
   }
   function updateAction_(env, ctx, data) {
     var a = loadAction_(env, ctx, data && data.id);
@@ -802,6 +894,7 @@ var RptCore = (function () {
     var f = actionFields_(data, false, ctx.role === 'super');
     a.name = f.name;
     a.date = f.date;
+    a.endDate = f.endDate;
     a.place = f.place;
     a.description = f.description;
     if (f.owners) a.owners = f.owners;
@@ -1724,7 +1817,7 @@ var RptCore = (function () {
       '\n' +
       rulesText_(rules);
     var user =
-      '行動：' + a.name + '（' + a.date + (a.place ? '，' + a.place : '') + '）\n錄音：' + rec.name + '\n\n逐字稿：\n' + source.slice(0, L.summaryInputMaxChars);
+      '行動：' + a.name + '（' + a.date + (a.endDate ? '～' + a.endDate : '') + (a.place ? '，' + a.place : '') + '）\n錄音：' + rec.name + '\n\n逐字稿：\n' + source.slice(0, L.summaryInputMaxChars);
     var out = env.ai.chat({ apiKey: aiKey_(env), model: aiConfig_(env).chatModel, system: system, user: user, task: 'summarize' });
     var summary = applyReplacements(trim_(isString_(out) ? out : ''), rules.replacements).slice(0, 20000);
     if (!summary) fail_('AI_ERROR', 'AI 沒有回傳內容，請稍後再試');
@@ -1797,6 +1890,7 @@ var RptCore = (function () {
     'config.set': setConfig_,
     // version 3
     boot: boot_,
+    'actions.delete': deleteAction_,
     'action.open': openAction_,
     'photos.getMany': getPhotos_,
     'contacts.list': listContacts_,

@@ -1776,3 +1776,44 @@ textarea.transcript {
 .table td[data-testid='member-name'] {
   white-space: nowrap;
 }
+
+/* 載入中的佔位（行動頁先出外框，素材陸續載入） */
+.skeleton {
+  height: 72px;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, #ece9e1 0%, #f6f4ee 50%, #ece9e1 100%);
+  background-size: 200% 100%;
+  animation: skeleton 1.2s ease-in-out infinite;
+  margin: 12px 0;
+}
+
+.skeleton.short {
+  height: 40px;
+  width: 60%;
+}
+
+@keyframes skeleton {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+form[aria-busy='true'] button[type='submit'],
+button[aria-busy='true'] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.danger-zone {
+  margin-top: 28px;
+  border-color: #f0c8c4;
+}
+
+.danger-zone h2 {
+  margin-top: 0;
+  font-size: 18px;
+  color: #b42318;
+}

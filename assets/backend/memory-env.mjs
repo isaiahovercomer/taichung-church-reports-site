@@ -76,6 +76,14 @@ export function createMemoryEnv(opts = {}) {
       state.actions[a.id] = structuredClone({ ...a, folderId: old.folderId, sheetId: old.sheetId });
       changed();
     },
+    deleteAction(id) {
+      delete state.actions[id];
+      delete state.materials[id];
+      delete state.files[id];
+      delete state.outputs[id];
+      delete state.docs[id];
+      changed();
+    },
     listMaterials: (aid) => Object.values(state.materials[aid] || {}).map((m) => structuredClone(m)),
     getMaterial: (aid, id) => (state.materials[aid]?.[id] ? structuredClone(state.materials[aid][id]) : null),
     putMaterial(aid, m) {

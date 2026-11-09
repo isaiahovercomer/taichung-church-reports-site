@@ -4,8 +4,8 @@
 // 安全原則：所有使用者欄位（標題、作者…）一律經 escapeHtml；
 // 內文只經 markdown-it（html:false），圖片只接受安全檔名，連結只接受 https/http/mailto/相對路徑。
 
-import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=dafa651415';
-import { LOGO_DATA_URL } from './brand.mjs?v=dafa651415';
+import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=38152deda1';
+import { LOGO_DATA_URL } from './brand.mjs?v=38152deda1';
 
 export const SITE_NAME = '台中市召會';
 export const SITE_NAME_EN = 'THE CHURCH IN TAICHUNG';
@@ -39,6 +39,33 @@ export function formatDate(date) {
 export function formatShortDate(date) {
   const p = dateParts(date);
   return p ? `${p.y}/${p.m}/${p.d}` : String(date ?? '');
+}
+
+/** 多天的行動：結束日期有效且晚於開始日期才算區間 */
+function rangeEnd(start, end) {
+  const a = dateParts(start);
+  const b = dateParts(end);
+  return a && b && String(end) > String(start) ? { a, b } : null;
+}
+
+/**
+ * 區間：2026-11-04～2026-11-06 → 2026/11/4（週三）～11/6（週五）；跨年才寫年份。
+ * 沒有結束日期（或同一天）就跟 formatDate 一樣。
+ */
+export function formatDateRange(start, end) {
+  const r = rangeEnd(start, end);
+  if (!r) return formatDate(start);
+  const { a, b } = r;
+  const tail = a.y === b.y ? `${b.m}/${b.d}` : `${b.y}/${b.m}/${b.d}`;
+  return `${formatDate(start)}～${tail}（週${WEEKDAYS[b.w]}）`;
+}
+
+/** 區間短格式：2026/11/4–11/6 */
+export function formatShortDateRange(start, end) {
+  const r = rangeEnd(start, end);
+  if (!r) return formatShortDate(start);
+  const { a, b } = r;
+  return `${formatShortDate(start)}–${a.y === b.y ? `${b.m}/${b.d}` : `${b.y}/${b.m}/${b.d}`}`;
 }
 
 export function isHttpsUrl(url) {
@@ -156,7 +183,7 @@ export function renderCard(report, opts = {}) {
     `<span class="card-text">` +
     `<span class="card-cat">${e(data.category)}</span>` +
     `<${tag} class="card-title">${e(data.title)}</${tag}>` +
-    `<time class="card-date" datetime="${e(data.date)}">${e(formatShortDate(data.date))}</time>` +
+    `<time class="card-date" datetime="${e(data.date)}">${e(formatShortDateRange(data.date, data.end_date))}</time>` +
     `</span></a>`
   );
 }
@@ -189,7 +216,7 @@ export function renderArticle(report, opts) {
   const catHref = href(root, categoryPath(data.category));
 
   const meta = [
-    ['日期', `<time datetime="${e(data.date)}">${e(formatDate(data.date))}</time>`],
+    ['日期', `<time datetime="${e(data.date)}">${e(formatDateRange(data.date, data.end_date))}</time>`],
     ['作者', e(data.author)],
     ['分類', link(catHref, e(data.category))],
   ];

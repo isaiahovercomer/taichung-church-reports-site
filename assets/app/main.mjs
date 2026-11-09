@@ -5,16 +5,16 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=dafa651415';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=dafa651415';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=dafa651415';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=dafa651415';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=dafa651415';
-import { buildPdf } from '../report/pdf.mjs?v=dafa651415';
-import { createMarkdown, formatDate, renderStandalone } from '../render.mjs?v=dafa651415';
-import { createTour } from './tour.mjs?v=dafa651415';
-import { createPhotoLoader } from './photos.mjs?v=dafa651415';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=dafa651415';
+import { ApiError, createApi, detectMode } from './api.mjs?v=38152deda1';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=38152deda1';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=38152deda1';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=38152deda1';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=38152deda1';
+import { buildPdf } from '../report/pdf.mjs?v=38152deda1';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=38152deda1';
+import { createTour } from './tour.mjs?v=38152deda1';
+import { createPhotoLoader } from './photos.mjs?v=38152deda1';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=38152deda1';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -28,7 +28,7 @@ const isUnsupported = (e) => e instanceof ApiError && e.code === 'BAD_INPUT' && 
 const photos = createPhotoLoader({ api, isUnsupported, persist: mode !== 'demo' });
 // 加速：行動頁資料（行動＋素材＋錄音）在切換頁籤時沿用 2 分鐘；首頁列表先顯示上次的再背景更新
 const ACTION_TTL = 2 * 60 * 1000;
-const state = { me: null, action: null, home: null, contacts: null };
+const state = { me: null, actions: new Map(), inflight: new Map(), home: null, contacts: null };
 const tour = createTour({
   api,
   mode,
@@ -53,12 +53,59 @@ function h(tag, props = {}, ...kids) {
     else if (k === 'value') value = v;
     else if (k === 'checked' || k === 'disabled' || k === 'selected') el[k] = !!v;
     else if (k === 'dataset') Object.assign(el.dataset, v);
+    else if (k === 'onclick' && typeof v === 'function' && (tag === 'button' || tag === 'a')) el.addEventListener('click', guardClick(el, v));
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? '' : String(v));
   }
   for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   if (value != null) el.value = value;
   return el;
+}
+/**
+ * 防連點：表單送出期間鎖住（再按不會重送），送出按鈕顯示「處理中…」；完成或失敗後恢復。
+ * Apps Script 一次往返 1 秒以上，建立行動要建資料夾與試算表更久，沒有這個保護很容易被連點成好幾筆。
+ */
+function guardSubmit(form, fn) {
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (form.dataset.busy === '1') return;
+    form.dataset.busy = '1';
+    form.setAttribute('aria-busy', 'true');
+    const btns = [...form.querySelectorAll('button[type=submit], button:not([type])')];
+    const saved = btns.map((b) => [b, b.disabled, b.textContent]);
+    for (const b of btns) {
+      b.disabled = true;
+      if (b.textContent.trim()) b.textContent = '處理中…';
+    }
+    try {
+      await fn(ev);
+    } finally {
+      delete form.dataset.busy;
+      form.removeAttribute('aria-busy');
+      for (const [b, d, t] of saved) {
+        b.disabled = d;
+        b.textContent = t;
+      }
+    }
+  });
+}
+/** 按鈕的非同步動作執行期間自動停用，避免連點重複執行 */
+function guardClick(el, fn) {
+  return (ev) => {
+    if (el.dataset.busy === '1') return;
+    const r = fn(ev);
+    if (!r || typeof r.then !== 'function') return r;
+    const was = el.disabled;
+    el.dataset.busy = '1';
+    el.disabled = true;
+    el.setAttribute('aria-busy', 'true');
+    return r.finally(() => {
+      delete el.dataset.busy;
+      el.removeAttribute('aria-busy');
+      // 動作本身改了 disabled（例如自己先停用）就尊重它
+      if (el.disabled) el.disabled = was;
+    });
+  };
 }
 /** replaceChildren 不會略過 null，統一經這裡濾掉 */
 const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
@@ -97,7 +144,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=dafa651415', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=38152deda1', import.meta.url))).text();
   return cssText;
 }
 
@@ -136,17 +183,33 @@ async function fetchAction(id) {
     if (!action) throw new ApiError('FORBIDDEN', '找不到這個行動，或您不是這個行動的協作者。');
     data = { action, materials: (await api.call('materials.list', { actionId: id })).materials, recordings: [], legacy: true };
   }
-  state.action = { id, data, at: Date.now() };
+  state.actions.set(id, { data, at: Date.now() });
   return data;
 }
+/** 快取中、還沒過期的行動資料（沒有就回 null） */
+function cachedAction(id) {
+  const c = state.actions.get(id);
+  return c && Date.now() - c.at < ACTION_TTL ? c.data : null;
+}
 async function loadAction(id, { force = false } = {}) {
-  const c = state.action;
-  if (!force && c && c.id === id && Date.now() - c.at < ACTION_TTL) return c.data;
-  return fetchAction(id);
+  if (!force) {
+    const c = cachedAction(id);
+    if (c) return c;
+    // 預先載入已經在路上：等同一個請求，不重打
+    if (state.inflight.has(id)) return state.inflight.get(id);
+  }
+  const p = fetchAction(id).finally(() => state.inflight.delete(id));
+  state.inflight.set(id, p);
+  return p;
+}
+/** 預先載入（手指碰到或滑鼠移到行動卡片時）：失敗不提示，真的點進去時再處理 */
+function prefetchAction(id) {
+  if (cachedAction(id) || state.inflight.has(id)) return;
+  loadAction(id).catch(() => {});
 }
 /** 資料改了：清掉快取，下次重新載入 */
 function invalidate() {
-  state.action = null;
+  state.actions.clear();
   if (state.home) state.home.fresh = false;
 }
 async function loadContacts() {
@@ -208,7 +271,7 @@ async function logout() {
   }
   api.setToken(null);
   state.me = null;
-  state.action = null;
+  state.actions.clear();
   state.home = null;
   state.contacts = null;
   await photos.clear();
@@ -217,8 +280,17 @@ async function logout() {
 }
 
 // ---------- 路由 ----------
+/** 換頁後仍要讓使用者看到的訊息（例如「已合併到原本的行動」） */
+let flash = null;
+function flashStatus(msg, kind = 'info') {
+  flash = { msg, kind };
+  setStatus(msg, kind);
+}
 async function route() {
-  setStatus('');
+  if (flash) {
+    setStatus(flash.msg, flash.kind);
+    flash = null;
+  } else setStatus('');
   if (!api.configured) {
     renderBar();
     fill(view, 
@@ -278,7 +350,7 @@ function renderLogin() {
     field('Email', email, '我們會寄一組 6 位數驗證碼給您，不需要密碼。'),
     h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit', text: '寄送驗證碼' })),
   );
-  emailForm.addEventListener('submit', async (ev) => {
+  guardSubmit(emailForm, async (ev) => {
     ev.preventDefault();
     err.textContent = '';
     try {
@@ -291,7 +363,7 @@ function renderLogin() {
       err.textContent = errorText(e);
     }
   });
-  codeForm.addEventListener('submit', async (ev) => {
+  guardSubmit(codeForm, async (ev) => {
     ev.preventDefault();
     err.textContent = '';
     try {
@@ -359,13 +431,20 @@ function drawHome(list) {
           list.map((a) =>
             h(
               'a',
-              { class: 'card action-card', href: `#/a/${a.id}` },
+              {
+                class: 'card action-card',
+                href: `#/a/${a.id}`,
+                // 先載入：手指一碰到、滑鼠移上去或用鍵盤選到就開始拿資料，點下去時多半已經好了
+                onpointerenter: () => prefetchAction(a.id),
+                ontouchstart: () => prefetchAction(a.id),
+                onfocus: () => prefetchAction(a.id),
+              },
               h(
                 'span',
                 { class: 'card-text' },
                 h('span', { class: 'card-cat', text: ROLE_LABEL[a.myRole] || '' }),
                 h('h2', { class: 'card-title', text: a.name }),
-                h('span', { class: 'card-date', text: `${formatDate(a.date)}${a.place ? `｜${a.place}` : ''}` }),
+                h('span', { class: 'card-date', text: `${formatDateRange(a.date, a.endDate)}${a.place ? `｜${a.place}` : ''}` }),
               ),
             ),
           ),
@@ -549,16 +628,19 @@ function collaboratorEditor(initial = []) {
 // ---------- 建立／編輯行動 ----------
 function actionForm(action, onSubmit) {
   const isSuper = state.me.role === 'super';
-  const a = action || { name: '', date: taipeiToday(), place: '', description: '', owners: [], collaborators: [], openSubmission: false, defaults: Core.PRESETS[1] };
+  const a = action || { name: '', date: taipeiToday(), endDate: '', place: '', description: '', owners: [], collaborators: [], openSubmission: false, defaults: Core.PRESETS[1] };
   const f = {
     name: h('input', { name: 'name', required: true, maxlength: 100, value: a.name }),
     date: h('input', { name: 'date', type: 'date', required: true, value: a.date }),
+    endDate: h('input', { name: 'endDate', type: 'date', value: a.endDate || '', min: a.date }),
     place: h('input', { name: 'place', maxlength: 100, value: a.place }),
     description: h('textarea', { name: 'description', class: 'short', rows: 3, maxlength: 2000, value: a.description }),
     owners: h('input', { name: 'owners', type: 'text', value: (a.owners || []).join(', '), disabled: !!action && !isSuper }),
     openSubmission: h('input', { type: 'checkbox', name: 'openSubmission', checked: !!a.openSubmission }),
   };
   const collabs = action ? null : collaboratorEditor();
+  // 這張表單的請求編號：網路重送或重按也只會建立一次（失敗後重送沿用同一個）
+  const requestId = action ? null : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   const settings = settingsControls(a.defaults);
   const err = h('p', { class: 'errors', role: 'alert' });
   // 負責人：建立者自動成為負責人；只有總管理者可以在行動設定裡更換
@@ -571,7 +653,8 @@ function actionForm(action, onSubmit) {
     'form',
     { class: 'panel action-form', 'data-testid': 'action-form' },
     field('行動名稱', f.name),
-    h('div', { class: 'row-2' }, field('日期', f.date), field('地點', f.place)),
+    h('div', { class: 'row-2' }, field('開始日期', f.date), field('結束日期（選填）', f.endDate, '多天的行動才填，例如 11/4～11/6；一天的行動留空')),
+    field('地點', f.place),
     field('說明', f.description),
     ownersField,
     // 協作者：建立時可先填；建立後改到「協作者」頁籤逐一新增／移除
@@ -590,12 +673,18 @@ function actionForm(action, onSubmit) {
     err,
     h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit', text: action ? '儲存行動設定' : '建立行動' })),
   );
-  form.addEventListener('submit', async (ev) => {
+  // 結束日期不能早於開始日期：改了開始日期就跟著調整可選範圍
+  f.date.addEventListener('change', () => {
+    f.endDate.min = f.date.value;
+    if (f.endDate.value && f.endDate.value < f.date.value) f.endDate.value = '';
+  });
+  guardSubmit(form, async (ev) => {
     ev.preventDefault();
     err.textContent = '';
     const data = {
       name: f.name.value,
       date: f.date.value,
+      endDate: f.endDate.value && f.endDate.value !== f.date.value ? f.endDate.value : '',
       place: f.place.value,
       description: f.description.value,
       openSubmission: f.openSubmission.checked,
@@ -614,7 +703,10 @@ function actionForm(action, onSubmit) {
     }
     // 相容舊版後端（version 1 建立時必填負責人 email）：送出自己的 email；
     // 新版後端一律以登入的 email 為負責人，一般使用者送來的 owners 會被忽略
-    if (!action) data.owners = state.me.email;
+    if (!action) {
+      data.owners = state.me.email;
+      data.requestId = requestId;
+    }
     if (action && isSuper) data.owners = f.owners.value;
     try {
       await onSubmit(data);
@@ -643,7 +735,10 @@ function renderActionForm() {
       }
       invalidate();
       state.contacts = null; // 後端已把協作者記進常用聯絡人
-      setStatus(`已建立行動「${r.action.name}」`);
+      if (r.duplicate === 'merged') flashStatus(`您已經有同名、同日期的行動「${r.action.name}」，已把這次填的內容更新到那一筆（沒有重複建立）`);
+      else flashStatus(`已建立行動「${r.action.name}」`);
+      // 新建立的行動還沒有素材：直接放進快取，進入行動頁不必再等一次載入
+      if (!r.duplicate) state.actions.set(r.action.id, { data: { action: r.action, materials: [], recordings: [], legacy: false }, at: Date.now() });
       go(`#/a/${r.action.id}`);
     }),
   );
@@ -665,7 +760,7 @@ async function renderAdmin() {
       field('新增總管理者 email', email, '總管理者可以查看與管理所有行動。一般人不需要加入名單：登入後就能建立自己的行動。'),
       h('button', { class: 'btn primary', type: 'submit', text: '新增' }),
     );
-    add.addEventListener('submit', async (ev) => {
+    guardSubmit(add, async (ev) => {
       ev.preventDefault();
       err.textContent = '';
       try {
@@ -676,7 +771,7 @@ async function renderAdmin() {
     });
     const mb = h('input', { type: 'number', name: 'video-max-mb', min: 1, max: 2000, value: String(r.videoMaxMb) });
     const cfg = h('form', { class: 'inline-form' }, field('影片上傳大小上限（MB）', mb), h('button', { class: 'btn', type: 'submit', text: '儲存' }));
-    cfg.addEventListener('submit', async (ev) => {
+    guardSubmit(cfg, async (ev) => {
       ev.preventDefault();
       err.textContent = '';
       try {
@@ -775,7 +870,7 @@ async function renderAiConfig(box) {
           : null,
       ),
     );
-    form.addEventListener('submit', async (ev) => {
+    guardSubmit(form, async (ev) => {
       ev.preventDefault();
       err.textContent = '';
       try {
@@ -826,10 +921,34 @@ async function renderGlobalRules(box) {
 }
 
 // ---------- 行動頁 ----------
+const ACTION_TABS = [
+  ['materials', '素材'],
+  ['generate', '生成報導'],
+  ['outputs', '產出紀錄'],
+];
+const MANAGER_TABS = [
+  ['members', '協作者'],
+  ['settings', '行動設定'],
+];
+/** 載入中的行動頁外框：用首頁列表已有的資料先顯示 */
+function actionShell(a, tab) {
+  const tabs = a.myRole === 'manager' ? [...ACTION_TABS, ...MANAGER_TABS] : ACTION_TABS;
+  return [
+    h('nav', { class: 'breadcrumb', 'aria-label': '麵包屑' }, h('a', { href: '#/', text: '我的行動' }), h('span', { class: 'sep', 'aria-hidden': 'true', text: '›' }), h('span', { text: a.name })),
+    a.place ? h('p', { class: 'kicker', text: a.place }) : null,
+    h('h1', { class: 'article-title', text: a.name }),
+    h('dl', { class: 'meta' }, h('div', { class: 'meta-item' }, h('dt', { text: '日期' }), h('dd', { text: formatDateRange(a.date, a.endDate) })), a.place ? h('div', { class: 'meta-item' }, h('dt', { text: '地點' }), h('dd', { text: a.place })) : null),
+    h('div', { class: 'app-tabs', role: 'tablist' }, tabs.map(([key, label]) => h('a', { role: 'tab', class: 'tab', href: `#/a/${a.id}/${key}`, 'aria-selected': String(key === tab), 'data-tab': key, text: label }))),
+    h('div', { class: 'tab-panel', 'aria-busy': 'true', 'data-testid': 'action-loading' }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton short' }), h('p', { class: 'hint', text: '載入素材中…' })),
+  ].filter(Boolean);
+}
 async function renderAction(id, tab, { force = false } = {}) {
-  // 切換頁籤時沿用剛載入的資料（不再每次重打兩次後端）
-  const c = state.action;
-  if (force || !c || c.id !== id || Date.now() - c.at >= ACTION_TTL) fill(view, h('p', { text: '載入中…' }));
+  // 切換頁籤時沿用剛載入的資料（不再每次重打兩次後端）；
+  // 沒有快取時先畫出外框（標題、日期、頁籤），素材再陸續載入，不讓畫面空白等待
+  if (force || !cachedAction(id)) {
+    const known = state.actions.get(id)?.data.action || state.home?.list.find((a) => a.id === id);
+    fill(view, known ? actionShell(known, tab) : h('p', { class: 'loading', text: '載入中…' }));
+  }
   let action;
   let materials;
   let data;
@@ -843,12 +962,7 @@ async function renderAction(id, tab, { force = false } = {}) {
   // 頁籤已經換了（使用者在載入中又點了別的）：交給新的那次 route
   if (location.hash && ACTION_ROUTE.exec(location.hash)?.[1] !== id) return;
   const isManager = action.myRole === 'manager';
-  const tabs = [
-    ['materials', '素材'],
-    ['generate', '生成報導'],
-    ['outputs', '產出紀錄'],
-  ];
-  if (isManager) tabs.push(['members', '協作者'], ['settings', '行動設定']);
+  const tabs = isManager ? [...ACTION_TABS, ...MANAGER_TABS] : ACTION_TABS;
   const panel = h('div', { class: 'tab-panel' });
   const leaveBtn =
     action.myRole === 'collaborator'
@@ -863,7 +977,7 @@ async function renderAction(id, tab, { force = false } = {}) {
               await api.call('actions.removeCollaborator', { actionId: id, email: state.me.email });
               invalidate();
               state.home = null;
-              setStatus(`已退出「${action.name}」`);
+              flashStatus(`已退出「${action.name}」`);
               go('#/');
             } catch (e) {
               setStatus(errorText(e), 'error');
@@ -878,7 +992,7 @@ async function renderAction(id, tab, { force = false } = {}) {
     h(
       'dl',
       { class: 'meta' },
-      h('div', { class: 'meta-item' }, h('dt', { text: '日期' }), h('dd', { text: formatDate(action.date) })),
+      h('div', { class: 'meta-item' }, h('dt', { text: '日期' }), h('dd', { text: formatDateRange(action.date, action.endDate) })),
       action.place ? h('div', { class: 'meta-item' }, h('dt', { text: '地點' }), h('dd', { text: action.place })) : null,
       h('div', { class: 'meta-item' }, h('dt', { text: '我的角色' }), h('dd', { 'data-testid': 'my-role', text: ROLE_LABEL[action.myRole] || '' })),
       action.owners && !isManager ? h('div', { class: 'meta-item' }, h('dt', { text: '負責人' }), h('dd', { text: action.owners.join('、') })) : null,
@@ -909,7 +1023,44 @@ async function renderAction(id, tab, { force = false } = {}) {
         setStatus('已儲存行動設定');
         reload();
       }),
+      deleteActionBox(action, materials),
     );
+}
+
+/** 刪除行動（例如連點造成的重複行動）：要輸入行動名稱確認；Drive 資料移到垃圾桶，30 天內可救回 */
+function deleteActionBox(action, materials) {
+  const err = h('p', { class: 'errors', role: 'alert' });
+  return h(
+    'section',
+    { class: 'panel danger-zone', 'data-testid': 'delete-action' },
+    h('h2', { text: '刪除這個行動' }),
+    h('p', {
+      class: 'hint',
+      text: `重複建立的行動可以在這裡刪除。${materials.length ? `這個行動有 ${materials.length} 筆素材，會一起刪除。` : '這個行動還沒有素材。'}刪除後協作者也看不到；雲端硬碟中的資料夾（素材試算表、照片、錄音）會移到垃圾桶，30 天內可以從雲端硬碟救回。`,
+    }),
+    h('button', {
+      type: 'button',
+      class: 'btn danger',
+      'data-testid': 'delete-action-btn',
+      text: '刪除這個行動',
+      onclick: async () => {
+        err.textContent = '';
+        const typed = prompt(`確定要刪除「${action.name}」？\n請輸入行動名稱確認：`);
+        if (typed == null) return;
+        try {
+          await api.call('actions.delete', { id: action.id, confirmName: typed });
+        } catch (e) {
+          err.textContent = isUnsupported(e) ? '後端還沒更新，暫時不能刪除行動。' : errorText(e);
+          return;
+        }
+        invalidate();
+        if (state.home) state.home.list = state.home.list.filter((x) => x.id !== action.id);
+        flashStatus(`已刪除行動「${action.name}」`);
+        go('#/');
+      },
+    }),
+    err,
+  );
 }
 
 // ---------- 協作者（負責人新增／移除共同協作者） ----------
@@ -918,7 +1069,8 @@ function renderMembers(panel, action) {
   const body = h('div');
   // 協作者名單改了：行動頁快取更新成新的名單（不必重新載入）
   const remember = (a) => {
-    if (state.action && state.action.id === a.id) state.action.data.action = a;
+    const c = state.actions.get(a.id);
+    if (c) c.data.action = a;
     if (state.home) state.home.fresh = false;
   };
   const addOne = async (a, email, name) => {
@@ -947,7 +1099,7 @@ function renderMembers(panel, action) {
       field('姓名（選填，方便辨認）', name),
       h('button', { class: 'btn primary', type: 'submit', text: '新增' }),
     );
-    add.addEventListener('submit', async (ev) => {
+    guardSubmit(add, async (ev) => {
       ev.preventDefault();
       await addOne(a, email.value, name.value.trim());
     });
@@ -1216,7 +1368,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
     err,
     h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit', text: '送出素材' }), cancelBtn),
   );
-  editor.addEventListener('submit', async (ev) => {
+  guardSubmit(editor, async (ev) => {
     ev.preventDefault();
     err.textContent = '';
     try {
@@ -1385,7 +1537,7 @@ function renderGenerate(panel, action, materials) {
     const mats = selected();
     const res = await renderA4({
       settings: s,
-      metaLine: [formatDate(action.date), action.place ? `地點：${action.place}` : '', `作者：${[...new Set(mats.map((m) => m.author).filter(Boolean))].join('、') || '行動報導小組'}`].filter(Boolean).join('　'),
+      metaLine: [formatDateRange(action.date, action.endDate), action.place ? `地點：${action.place}` : '', `作者：${[...new Set(mats.map((m) => m.author).filter(Boolean))].join('、') || '行動報導小組'}`].filter(Boolean).join('　'),
       compose: ({ words, maxPhotos, note }) => composeReport({ action, materials: mats, settings: { ...s, maxPhotos }, summarizer: summarizer(), words, note, print: true }),
       loadImage: async (photoId) => loadImg(await photoDataUrl(action.id, photoId)),
     });

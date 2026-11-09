@@ -2,7 +2,7 @@
 // 再轉成 Markdown（給 render.mjs 生網頁）或交給 A4 排版（a4-layout.mjs）。
 // 純函式，不碰 DOM，Node 單元測試可直接 import。
 
-import { countChars } from './summarizer.mjs?v=dafa651415';
+import { countChars } from './summarizer.mjs?v=38152deda1';
 
 /** 單一素材的照片順序：主圖 → 有圖說 → 其他（同級維持原順序） */
 export function orderPhotos(photos = []) {
@@ -137,6 +137,7 @@ export async function composeReport({ action, materials, settings, summarizer, w
     title: action.name,
     kicker: action.place ? `${action.place}・行動報導` : '行動報導',
     date: action.date,
+    end_date: action.endDate || '',
     author: authors.length ? authors.join('、') : '行動報導小組',
     category: '行動報導',
     place: action.place || '',
