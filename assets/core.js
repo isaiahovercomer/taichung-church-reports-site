@@ -26,7 +26,9 @@ var RptCore = (function () {
 
   // ---------- 常數 ----------
   // version 3：合併查詢加速（boot／action.open／photos.getMany）、協作者姓名與常用聯絡人、行動錄音逐字稿（OpenAI）
-  var RPT_VERSION_ = 3;
+  // version 5：登入時回傳首頁資料（auth.verifyCode withBoot）
+  // version 4：行動日期區間（endDate）、防重複建立（requestId、同名同日合併）、刪除行動（actions.delete）
+  var RPT_VERSION_ = 5;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -484,7 +486,16 @@ var RptCore = (function () {
       fail_('CODE_WRONG', '驗證碼不正確，還可以再試 ' + left + ' 次');
     }
     var token = createSession_(env, email);
-    return { token: token, email: email };
+    var out = { token: token, email: email };
+    // 加速：登入成功時順便回傳首頁資料（me＋我的行動），前端不必再多一次往返；失敗不影響登入
+    if (data && data.withBoot === true) {
+      try {
+        out.boot = boot_(env, ctxOf_(env, token));
+      } catch (e) {
+        out.boot = null;
+      }
+    }
+    return out;
   }
 
   // ---------- Session ----------

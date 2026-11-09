@@ -3,7 +3,7 @@
 //   套用替換規則／AI 修正 → AI 彙整重點 → 「加入素材」後就能在「生成報導」使用。
 // 另含逐字稿規則編輯器（全站：總管理者頁；本行動：負責人在這裡改）。
 
-import { SEGMENT_SEC, audioSegments, bytesToBase64, probeAudio } from './audio.mjs?v=38152deda1';
+import { SEGMENT_SEC, audioSegments, bytesToBase64, probeAudio } from './audio.mjs?v=fdfd8c3183';
 
 const CONCURRENCY = 2; // 同時轉錄幾段（Apps Script 每段都要等 OpenAI 回應）
 const RETRIES = 2;

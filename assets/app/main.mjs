@@ -5,16 +5,17 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=38152deda1';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=38152deda1';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=38152deda1';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=38152deda1';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=38152deda1';
-import { buildPdf } from '../report/pdf.mjs?v=38152deda1';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=38152deda1';
-import { createTour } from './tour.mjs?v=38152deda1';
-import { createPhotoLoader } from './photos.mjs?v=38152deda1';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=38152deda1';
+import { ApiError, createApi, detectMode } from './api.mjs?v=fdfd8c3183';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=fdfd8c3183';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=fdfd8c3183';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=fdfd8c3183';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=fdfd8c3183';
+import { buildPdf } from '../report/pdf.mjs?v=fdfd8c3183';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=fdfd8c3183';
+import { createTour } from './tour.mjs?v=fdfd8c3183';
+import { createPhotoLoader } from './photos.mjs?v=fdfd8c3183';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=fdfd8c3183';
+import { createSnapshot } from './snapshot.mjs?v=fdfd8c3183';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -29,6 +30,32 @@ const photos = createPhotoLoader({ api, isUnsupported, persist: mode !== 'demo' 
 // 加速：行動頁資料（行動＋素材＋錄音）在切換頁籤時沿用 2 分鐘；首頁列表先顯示上次的再背景更新
 const ACTION_TTL = 2 * 60 * 1000;
 const state = { me: null, actions: new Map(), inflight: new Map(), home: null, contacts: null };
+// 上次畫面存在這台裝置：重新整理／下次開啟先顯示，再背景更新
+const snapshot = createSnapshot({ enabled: mode !== 'demo' });
+function saveSnapshot() {
+  const actions = {};
+  for (const [id, c] of state.actions) actions[id] = { data: c.data, at: c.at };
+  snapshot.write(api.token, { me: state.me, home: state.home?.list || null, actions });
+}
+/** 從上次畫面還原（資料標成過期：會顯示，但一定會背景更新） */
+function restoreSnapshot() {
+  const snap = snapshot.read(api.token);
+  if (!snap || !snap.me) return false;
+  state.me = snap.me;
+  if (snap.home) state.home = { list: snap.home, at: 0, fresh: false };
+  for (const [id, c] of Object.entries(snap.actions || {})) if (!state.actions.has(id)) state.actions.set(id, { data: c.data, at: 0, savedAt: c.at });
+  return true;
+}
+/** 背景更新時發現登入已過期：清掉並回到登入頁 */
+function sessionExpired() {
+  snapshot.clear();
+  api.setToken(null);
+  state.me = null;
+  state.home = null;
+  state.actions.clear();
+  flashStatus('登入已過期，請重新登入', 'error');
+  route();
+}
 const tour = createTour({
   api,
   mode,
@@ -144,7 +171,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=38152deda1', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=fdfd8c3183', import.meta.url))).text();
   return cssText;
 }
 
@@ -167,6 +194,7 @@ async function fetchHome() {
     list = (await api.call('actions.list')).actions;
   }
   state.home = { list, at: Date.now(), fresh: true };
+  saveSnapshot();
   return list;
 }
 /** 行動頁：action.open 一次拿行動＋素材＋錄音（必要時含 me）；舊版後端退回 actions.list＋materials.list */
@@ -184,7 +212,12 @@ async function fetchAction(id) {
     data = { action, materials: (await api.call('materials.list', { actionId: id })).materials, recordings: [], legacy: true };
   }
   state.actions.set(id, { data, at: Date.now() });
+  saveSnapshot();
   return data;
+}
+/** 任何時間存過的行動資料（含過期的上次畫面），用來先顯示 */
+function staleAction(id) {
+  return state.actions.get(id)?.data || null;
 }
 /** 快取中、還沒過期的行動資料（沒有就回 null） */
 function cachedAction(id) {
@@ -201,6 +234,19 @@ async function loadAction(id, { force = false } = {}) {
   const p = fetchAction(id).finally(() => state.inflight.delete(id));
   state.inflight.set(id, p);
   return p;
+}
+/** 首頁顯示後，背景依序先載入前幾個行動（一次一個，不跟使用者的操作搶） */
+let warmTimer = null;
+function warmActions(list) {
+  clearTimeout(warmTimer);
+  const ids = list.slice(0, 3).map((a) => a.id);
+  const next = () => {
+    const id = ids.shift();
+    if (!id) return;
+    if (cachedAction(id) || state.inflight.has(id)) return next();
+    loadAction(id).catch(() => {}).finally(() => (warmTimer = setTimeout(next, 200)));
+  };
+  warmTimer = setTimeout(next, 600);
 }
 /** 預先載入（手指碰到或滑鼠移到行動卡片時）：失敗不提示，真的點進去時再處理 */
 function prefetchAction(id) {
@@ -270,6 +316,7 @@ async function logout() {
     /* 已失效也沒關係 */
   }
   api.setToken(null);
+  snapshot.clear();
   state.me = null;
   state.actions.clear();
   state.home = null;
@@ -306,6 +353,8 @@ async function route() {
   const hash = location.hash || '#/';
   const am = ACTION_ROUTE.exec(hash);
   const isHome = hash === '#/' || hash === '#';
+  // 有上次畫面：直接用（首頁／行動頁會背景更新）
+  if (!state.me) restoreSnapshot();
   if (!state.me) {
     // 第一次載入：跟畫面資料一起拿 me（省一次 1 秒以上的往返）
     fill(view, h('p', { text: '載入中…' }));
@@ -334,7 +383,15 @@ async function route() {
 const ACTION_ROUTE = /^#\/a\/([A-Za-z0-9_-]+)(?:\/(materials|generate|outputs|members|settings))?$/;
 
 // ---------- 登入 ----------
+/** 預熱：Apps Script 閒置一陣子後第一次呼叫特別慢；登入頁一打開就先叫醒它 */
+let warmedUp = false;
+function warmUpBackend() {
+  if (warmedUp || mode === 'demo') return;
+  warmedUp = true;
+  api.call('ping').catch(() => {});
+}
 function renderLogin() {
+  warmUpBackend();
   const err = h('p', { class: 'errors', role: 'alert' });
   const email = h('input', { type: 'email', name: 'email', required: true, autocomplete: 'email', value: mode === 'demo' ? 'demo@example.com' : '' });
   const code = h('input', { type: 'text', name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, pattern: '\\d{6}', required: true });
@@ -367,9 +424,18 @@ function renderLogin() {
     ev.preventDefault();
     err.textContent = '';
     try {
-      const r = await api.call('auth.verifyCode', { email: email.value, code: code.value });
+      const r = await api.call('auth.verifyCode', { email: email.value, code: code.value, withBoot: true });
       api.setToken(r.token);
+      snapshot.clear();
       state.me = null;
+      state.actions.clear();
+      state.home = null;
+      // 後端順便回傳了首頁資料（version 5）：直接用，不必再等一次
+      if (r.boot && r.boot.me) {
+        state.me = r.boot.me;
+        state.home = { list: r.boot.actions || [], at: Date.now(), fresh: true };
+        saveSnapshot();
+      }
       demoBox.hidden = true;
       // 協作者點負責人傳來的 #/a/<id> 連結再登入：登入後回到原本要去的行動
       go(location.hash && location.hash !== '#' ? location.hash : '#/');
@@ -395,6 +461,7 @@ async function renderHome() {
     // 這次進站剛用 boot 拿到的就不再重拿；否則背景更新，有變才重畫
     if (cached.fresh) {
       cached.fresh = false;
+      warmActions(cached.list);
       return;
     }
     try {
@@ -402,14 +469,19 @@ async function renderHome() {
       state.home.fresh = false;
       if (location.hash && location.hash !== '#/' && location.hash !== '#') return; // 已離開首頁
       if (JSON.stringify(fresh) !== JSON.stringify(cached.list)) drawHome(fresh);
-    } catch {
-      /* 背景更新失敗：保留畫面 */
+      renderBar();
+      warmActions(fresh);
+    } catch (e) {
+      if (e.code === 'AUTH_REQUIRED') return sessionExpired();
+      /* 其他背景更新失敗：保留畫面 */
     }
     return;
   }
   fill(view, h('p', { text: '載入中…' }));
   try {
-    drawHome(await fetchHome());
+    const list = await fetchHome();
+    drawHome(list);
+    warmActions(list);
   } catch (e) {
     fill(view, h('p', { class: 'errors', role: 'alert', text: errorText(e) }));
   }
@@ -942,10 +1014,43 @@ function actionShell(a, tab) {
     h('div', { class: 'tab-panel', 'aria-busy': 'true', 'data-testid': 'action-loading' }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton short' }), h('p', { class: 'hint', text: '載入素材中…' })),
   ].filter(Boolean);
 }
+/** 使用者正在輸入或選了檔案：先不要重畫，免得打到一半的內容不見 */
+function userBusy() {
+  const el = document.activeElement;
+  if (el && view.contains(el) && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+  if (view.querySelector('form[aria-busy=true], [aria-busy=true] button, .transcribe-progress:not([hidden])')) return true;
+  return [...view.querySelectorAll('input[type=file]')].some((f) => f.files && f.files.length);
+}
+/** 背景更新行動頁：資料有變才重畫；使用者正在輸入時改成顯示「有新資料」按鈕 */
+function revalidateAction(id, shown) {
+  loadAction(id, { force: true })
+    .then((fresh) => {
+      const m = ACTION_ROUTE.exec(location.hash || '');
+      if (!m || m[1] !== id) return; // 已離開這個行動
+      if (JSON.stringify(fresh) === JSON.stringify(shown)) return;
+      if (!userBusy()) return renderAction(id, m[2] || 'materials');
+      if (view.querySelector('[data-testid=fresh-data]')) return;
+      view.prepend(
+        h('p', { class: 'notice fresh-data', 'data-testid': 'fresh-data' }, '這個行動有新的資料。', h('button', { type: 'button', class: 'btn small', text: '更新畫面', onclick: () => renderAction(id, (ACTION_ROUTE.exec(location.hash || '') || [])[2] || 'materials') })),
+      );
+    })
+    .catch((e) => {
+      if (e.code === 'AUTH_REQUIRED') return sessionExpired();
+      if (e.code === 'FORBIDDEN' || e.code === 'NOT_FOUND') {
+        // 已被移除或行動已刪除：清掉舊資料，重畫會顯示錯誤
+        state.actions.delete(id);
+        saveSnapshot();
+        const m = ACTION_ROUTE.exec(location.hash || '');
+        if (m && m[1] === id) renderAction(id, m[2] || 'materials', { force: true });
+      }
+    });
+}
 async function renderAction(id, tab, { force = false } = {}) {
   // 切換頁籤時沿用剛載入的資料（不再每次重打兩次後端）；
   // 沒有快取時先畫出外框（標題、日期、頁籤），素材再陸續載入，不讓畫面空白等待
-  if (force || !cachedAction(id)) {
+  // 有過期的資料（上次畫面、超過 2 分鐘）：先顯示，背景更新
+  const stale = !force && !cachedAction(id) ? staleAction(id) : null;
+  if (!stale && (force || !cachedAction(id))) {
     const known = state.actions.get(id)?.data.action || state.home?.list.find((a) => a.id === id);
     fill(view, known ? actionShell(known, tab) : h('p', { class: 'loading', text: '載入中…' }));
   }
@@ -953,8 +1058,9 @@ async function renderAction(id, tab, { force = false } = {}) {
   let materials;
   let data;
   try {
-    data = await loadAction(id, { force });
+    data = stale || (await loadAction(id, { force }));
     ({ action, materials } = data);
+    if (stale) revalidateAction(id, stale);
   } catch (e) {
     fill(view, h('p', { class: 'errors', role: 'alert', 'data-testid': 'action-error', text: errorText(e) }), h('a', { href: '#/', text: '回我的行動' }));
     return;
