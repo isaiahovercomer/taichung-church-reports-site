@@ -1,11 +1,8 @@
-// 「素材」頁的行動錄音與逐字稿：
-//   上傳錄音 → 瀏覽器切段（audio.mjs）→ 逐段送後端轉錄（OpenAI）→ 逐字稿 →
-//   套用替換規則／AI 修正 → AI 彙整重點 → 「加入素材」後就能在「生成報導」使用。
+// 「素材」頁的行動逐字稿：
+//   貼上逐字稿 → 套用替換規則／AI 修正 → AI 彙整重點 → 「加入素材」後就能在「生成報導」使用。
+//   （上傳錄音檔自動轉錄已拿掉：大檔案上傳、轉錄、回傳反而更花時間；改用手機或電腦先轉好再貼上）
 // 另含逐字稿規則編輯器（全站：總管理者頁；本行動：負責人在這裡改）。
 
-import { SEGMENT_SEC, audioSegments, bytesToBase64, probeAudio } from './audio.mjs?v=fdfd8c3183';
-
-const CONCURRENCY = 2; // 同時轉錄幾段（Apps Script 每段都要等 OpenAI 回應）
 const RETRIES = 2;
 const CORRECT_CHUNK = 5000;
 
@@ -16,7 +13,6 @@ const fmtTime = (sec) => {
   const ss = s % 60;
   return h ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}` : `${m}:${String(ss).padStart(2, '0')}`;
 };
-const fmtMb = (b) => `${(b / 1048576).toFixed(b > 100 * 1048576 ? 0 : 1)}MB`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 把逐字稿切成數千字一段（盡量在換行或句號處切），給 AI 修正 */
@@ -134,26 +130,6 @@ export function renderRecordings(ctx) {
   let recordings = ctx.recordings || [];
   const err = h('p', { class: 'errors', role: 'alert' });
   const list = h('div', { class: 'recording-list', 'data-testid': 'recording-list' });
-  const running = new Map(); // recId → { cancel }
-
-  // ---- 上傳與轉錄 ----
-  const fileInput = h('input', { type: 'file', name: 'audio-file', accept: 'audio/*,video/mp4,.m4a,.mp3,.wav,.aac,.ogg,.webm,.flac' });
-  const keep = h('input', { type: 'checkbox', name: 'keep-original', checked: true });
-  const startBtn = h('button', { type: 'button', class: 'btn primary', 'data-testid': 'start-transcribe', text: '開始轉逐字稿', disabled: !ai.ready });
-  const progress = h('div', { class: 'transcribe-progress', hidden: true, 'data-testid': 'transcribe-progress' });
-
-  startBtn.addEventListener('click', async () => {
-    const file = fileInput.files[0];
-    err.textContent = '';
-    if (!file) {
-      err.textContent = '請先選擇錄音檔';
-      return;
-    }
-    // 同一個檔案、還沒轉完：接著轉（已完成的段落不重送）
-    const resume = recordings.find((r) => r.name === file.name && r.size === file.size && r.status !== 'done');
-    await transcribeFile(file, resume || null);
-    fileInput.value = '';
-  });
 
   async function withRetry(fn) {
     for (let k = 0; ; k++) {
@@ -167,117 +143,6 @@ export function renderRecordings(ctx) {
     }
   }
 
-  async function transcribeFile(file, resume) {
-    const audioMax = (me.audioMaxMb || 600) * 1048576;
-    let wake = null;
-    const bar = h('progress', { max: 1, value: 0 });
-    const label = h('span', { class: 'hint' });
-    const cancelBtn = h('button', { type: 'button', class: 'btn small', text: '暫停' });
-    fill(progress, h('p', { text: `處理「${file.name}」（${fmtMb(file.size)}）…轉錄期間請保持這個頁面開啟；中途關掉的話，重新選同一個檔案就會從沒轉完的段落繼續。` }), bar, label, cancelBtn);
-    progress.hidden = false;
-    startBtn.disabled = true;
-    let cancelled = false;
-    cancelBtn.onclick = () => {
-      cancelled = true;
-      label.textContent = '暫停中（目前送出的段落完成後停止）…';
-    };
-    try {
-      try {
-        wake = await navigator.wakeLock?.request('screen');
-      } catch {
-        wake = null; // 不支援或沒權限：不影響
-      }
-      setStatus('分析錄音…');
-      const probe = await probeAudio(file);
-      let rec = resume;
-      if (!rec) {
-        const est = Math.max(1, Math.ceil(probe.durationSec / SEGMENT_SEC));
-        rec = (
-          await api.call('recordings.create', {
-            actionId: action.id,
-            name: file.name,
-            size: file.size,
-            durationSec: Math.round(probe.durationSec),
-            segmentSec: SEGMENT_SEC,
-            segmentCount: Math.min(est, 80),
-          })
-        ).recording;
-        recordings = [rec, ...recordings];
-        drawList();
-      }
-      const done = new Set((rec.segmentsDone || []).map((v, i) => (v ? i : -1)).filter((i) => i >= 0));
-      let total = rec.segmentCount || 1;
-      let finished = done.size;
-      let decodeP = 0;
-      const show = () => {
-        bar.value = Math.min(1, (finished + decodeP * 0.05) / Math.max(total, 1));
-        label.textContent = `已轉錄 ${finished}／${total} 段（每段約 ${SEGMENT_SEC / 60} 分鐘）・讀取錄音 ${Math.round(decodeP * 100)}%`;
-      };
-      show();
-
-      // 原始錄音另外直傳到 Drive 保存（選用；失敗不影響轉錄）
-      const archive =
-        keep.checked && !rec.fileId && file.size <= audioMax
-          ? (async () => {
-              const sess = await api.call('audio.createUpload', { actionId: action.id, name: file.name, mime: file.type || 'audio/mp4', size: file.size, origin: location.origin });
-              const fileId = await api.uploadResumable(sess.uploadUrl, file, () => {});
-              await api.call('audio.complete', { actionId: action.id, fileId });
-              await api.call('recordings.attachFile', { actionId: action.id, id: rec.id, fileId });
-              return true;
-            })().catch((e) => {
-              setStatus(`原始錄音沒有存到 Drive（${errorText(e)}）；逐字稿不受影響`, 'error');
-              return false;
-            })
-          : Promise.resolve(null);
-
-      const inflight = new Set();
-      let failure = null;
-      let finalTranscript = null;
-      for await (const seg of audioSegments(file, { format: probe.format, segmentSec: SEGMENT_SEC, onProgress: (p) => ((decodeP = p), show()) })) {
-        if (failure || cancelled) break;
-        if (seg.last) total = seg.index + 1;
-        else if (seg.index + 1 > total) total = seg.index + 1;
-        if (done.has(seg.index) && !seg.last) continue;
-        while (inflight.size >= CONCURRENCY) await Promise.race(inflight);
-        if (failure || cancelled) break;
-        const data = bytesToBase64(seg.wav);
-        const p = withRetry(() => api.call('transcribe.segment', { actionId: action.id, id: rec.id, index: seg.index, start: seg.start, end: seg.end, last: seg.last, data }))
-          .then((r) => {
-            done.add(seg.index);
-            finished = done.size;
-            total = Math.max(total, r.segmentCount);
-            if (r.status === 'done') finalTranscript = r.transcript;
-            show();
-          })
-          .catch((e) => (failure = e))
-          .finally(() => inflight.delete(p));
-        inflight.add(p);
-      }
-      await Promise.all(inflight);
-      if (failure) throw failure;
-      if (cancelled) {
-        setStatus('已暫停；重新選同一個檔案按「開始轉逐字稿」就會接著轉');
-      } else {
-        setStatus(finalTranscript != null ? '逐字稿完成' : '轉錄送出完成');
-      }
-      label.textContent = '等待原始錄音上傳到 Drive…';
-      await archive;
-      await refresh();
-      if (!cancelled) openDetail(rec.id);
-    } catch (e) {
-      err.textContent = `${errorText(e)}（已完成的段落會保留，重新選同一個檔案可以接著轉）`;
-      await refresh().catch(() => {});
-    } finally {
-      try {
-        await wake?.release();
-      } catch {
-        /* 忽略 */
-      }
-      progress.hidden = true;
-      startBtn.disabled = !ai.ready;
-    }
-  }
-
   async function refresh() {
     recordings = (await api.call('recordings.list', { actionId: action.id })).recordings;
     drawList();
@@ -287,9 +152,8 @@ export function renderRecordings(ctx) {
   const pasteName = h('input', { name: 'paste-name', maxlength: 200, placeholder: '例如：11/8 福音行動分享' });
   const pasteText = h('textarea', { name: 'paste-transcript', rows: 5 });
   const pasteBox = h(
-    'details',
-    { class: 'paste-transcript' },
-    h('summary', { text: '已經有逐字稿了？直接貼上（例如在自己電腦轉好的）' }),
+    'div',
+    { class: 'paste-transcript', 'data-testid': 'paste-transcript' },
     field('名稱', pasteName),
     field('逐字稿', pasteText),
     h('div', { class: 'actions' }, h('button', {
@@ -302,7 +166,6 @@ export function renderRecordings(ctx) {
           const r = await api.call('recordings.create', { actionId: action.id, name: pasteName.value || '貼上的逐字稿', transcript: pasteText.value });
           pasteName.value = '';
           pasteText.value = '';
-          pasteBox.open = false;
           recordings = [r.recording, ...recordings];
           drawList();
           openDetail(r.recording.id);
@@ -346,7 +209,7 @@ export function renderRecordings(ctx) {
   const details = new Map(); // recId → detail element
   function statusText(r) {
     if (r.status === 'done') return `已完成・${r.transcriptChars.toLocaleString()} 字${r.hasCorrected ? '・已修正' : ''}${r.hasSummary ? '・已彙整' : ''}`;
-    return `轉錄中 ${r.doneCount}／${r.segmentCount} 段（重新選同一個檔案可以接著轉）`;
+    return `未完成（舊的錄音轉錄：已轉 ${r.doneCount}／${r.segmentCount} 段）`;
   }
   function drawList() {
     fill(
@@ -535,12 +398,9 @@ export function renderRecordings(ctx) {
   drawList();
   fill(
     section,
-    h('h2', { text: '行動錄音與逐字稿' }),
-    h('p', { class: 'hint', text: '上傳整場行動的錄音（mp3、m4a、wav 等，最長可到 150 分鐘以上），系統會在瀏覽器切成約 5 分鐘一段，逐段轉成逐字稿；再用 AI 修正、彙整重點，加入素材後就能直接用在報導撰寫。' }),
-    ai.ready ? null : h('p', { class: 'notice', 'data-testid': 'ai-not-ready', text: '總管理者尚未設定 OpenAI 金鑰，暫時不能自動轉錄；可以先用下方「直接貼上逐字稿」。' }),
-    h('div', { class: 'row-2' }, field('錄音檔', fileInput), h('label', { class: 'field checkbox' }, keep, h('span', { text: `同時把原始錄音存到這個行動的 Drive 資料夾（上限 ${me.audioMaxMb || 600}MB）` }))),
-    h('div', { class: 'actions' }, startBtn),
-    progress,
+    h('h2', { text: '行動逐字稿' }),
+    h('p', { class: 'hint', text: '把行動的逐字稿貼進來（例如用手機或電腦的語音轉文字先轉好），再用 AI 修正、彙整重點，加入素材後就能直接用在報導撰寫。' }),
+    ai.ready ? null : h('p', { class: 'notice', 'data-testid': 'ai-not-ready', text: '總管理者尚未設定 OpenAI 金鑰，暫時不能用 AI 修正與彙整；可以先用「套用替換規則」並手動修改。' }),
     pasteBox,
     err,
     list,

@@ -5,17 +5,17 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=fdfd8c3183';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=fdfd8c3183';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=fdfd8c3183';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=fdfd8c3183';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=fdfd8c3183';
-import { buildPdf } from '../report/pdf.mjs?v=fdfd8c3183';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=fdfd8c3183';
-import { createTour } from './tour.mjs?v=fdfd8c3183';
-import { createPhotoLoader } from './photos.mjs?v=fdfd8c3183';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=fdfd8c3183';
-import { createSnapshot } from './snapshot.mjs?v=fdfd8c3183';
+import { ApiError, createApi, detectMode } from './api.mjs?v=e1f809eb5f';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=e1f809eb5f';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=e1f809eb5f';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=e1f809eb5f';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=e1f809eb5f';
+import { buildPdf } from '../report/pdf.mjs?v=e1f809eb5f';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=e1f809eb5f';
+import { createTour } from './tour.mjs?v=e1f809eb5f';
+import { createPhotoLoader } from './photos.mjs?v=e1f809eb5f';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=e1f809eb5f';
+import { createSnapshot } from './snapshot.mjs?v=e1f809eb5f';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -171,7 +171,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=fdfd8c3183', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=e1f809eb5f', import.meta.url))).text();
   return cssText;
 }
 
