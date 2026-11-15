@@ -5,17 +5,18 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=6252056ea9';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=6252056ea9';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=6252056ea9';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=6252056ea9';
-import { canvasToJpegBytes, renderA4, renderA4Plan } from '../report/a4.mjs?v=6252056ea9';
-import { buildPdf } from '../report/pdf.mjs?v=6252056ea9';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=6252056ea9';
-import { createTour } from './tour.mjs?v=6252056ea9';
-import { createPhotoLoader } from './photos.mjs?v=6252056ea9';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=6252056ea9';
-import { createSnapshot } from './snapshot.mjs?v=6252056ea9';
+import { ApiError, createApi, detectMode } from './api.mjs?v=e43b49d580';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=e43b49d580';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=e43b49d580';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=e43b49d580';
+import { canvasToJpegBytes, renderA4, renderA4Plan } from '../report/a4.mjs?v=e43b49d580';
+import { buildPdf } from '../report/pdf.mjs?v=e43b49d580';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=e43b49d580';
+import { createTour } from './tour.mjs?v=e43b49d580';
+import { helpView } from './help.mjs?v=e43b49d580';
+import { createPhotoLoader } from './photos.mjs?v=e43b49d580';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=e43b49d580';
+import { createSnapshot } from './snapshot.mjs?v=e43b49d580';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -171,7 +172,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=6252056ea9', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=e43b49d580', import.meta.url))).text();
   return cssText;
 }
 
@@ -311,6 +312,7 @@ function renderBar() {
         h('span', { 'data-testid': 'me-email', text: state.me.email }),
         state.me.role === 'super' ? h('span', { class: 'role-badge', text: '總管理者' }) : null,
         h('button', { class: 'btn small', type: 'button', 'data-testid': 'tour-replay', onclick: () => tour.start(), text: '使用教學' }),
+        h('a', { class: 'btn small', href: '#/help', 'data-testid': 'help-link', text: '使用說明' }),
         h('button', { class: 'btn small', type: 'button', 'data-testid': 'logout', onclick: logout, text: '登出' }),
       )
     : null;
@@ -351,6 +353,12 @@ async function route() {
     fill(view, 
       h('section', { class: 'panel' }, h('h1', { class: 'page-title', text: '尚未設定後端' }), h('p', { text: '請在 site.config.json 填入 Apps Script 網頁應用程式網址（apiUrl）後重新建置。也可以在網址後面加上 ?demo=1 試用示範模式。' })),
     );
+    return;
+  }
+  if ((location.hash || '') === '#/help') {
+    renderBar();
+    fill(view, helpView(h, { loggedIn: !!api.token }));
+    window.scrollTo(0, 0);
     return;
   }
   if (!api.token) {
@@ -457,7 +465,7 @@ function renderLogin() {
     }
   });
   fill(view, 
-    h('section', { class: 'panel login' }, h('h1', { class: 'page-title', text: '登入' }), h('p', { text: '台中市召會行動報導協作平台：任何人用 email 登入後都能建立自己的行動、邀請共同協作者上傳報導與見證，一鍵生成網頁報導與 A4 圖檔。' }), emailForm, codeForm, err),
+    h('section', { class: 'panel login' }, h('h1', { class: 'page-title', text: '登入' }), h('p', { text: '台中市召會行動報導協作平台：任何人用 email 登入後都能建立自己的行動、邀請共同協作者上傳報導與見證，一鍵生成網頁報導與 A4 圖檔。' }), emailForm, codeForm, err, h('p', { class: 'hint' }, h('a', { href: '#/help', 'data-testid': 'help-link', text: '第一次使用？看使用說明' }))),
   );
 }
 
@@ -1892,7 +1900,7 @@ function renderGenerate(panel, action, materials) {
   const pickRow = (m) => h('label', { class: 'checkbox' }, h('input', { type: 'checkbox', name: 'use-material', value: m.id, 'data-unit': unitKey(m), checked: true }), `${m.kind === 'testimony' ? '［見證］' : '［報導］'}${m.title}`);
   const picks = h(
     'fieldset',
-    { class: 'field material-picks' },
+    { class: 'field material-picks', 'data-testid': 'pick-materials' },
     h('legend', { class: 'label', text: '使用的素材' }),
     units.length
       ? groupByUnit(materials, units).map((g) => {

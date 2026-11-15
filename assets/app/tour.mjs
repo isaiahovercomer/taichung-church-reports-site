@@ -1,12 +1,13 @@
 // 使用教學（導覽）：第一次登入後自動播放；背景變暗、逐步標出介面；上一步／下一步／跳過；
 // 依角色顯示步驟（共同協作者／負責人）；可從上方「使用教學」重看。
 // v2：任何人登入後都能建立自己的行動並成為負責人；負責人在「協作者」頁籤增減共同協作者。
+// v4：行動的單位／區域（建立時設定、素材選單位、生成時依單位勾選與自訂 A4 每頁單位）。
 // 做法參考聖經 App 的 tour.js（聚光燈 + 說明泡泡），程式為本專案自寫。
 //
 // ★ 以後新增功能時：在 STEPS 加步驟，並把該步驟的 since 設成新的版本號、TOUR_VERSION 加 1。
 //   看過舊版教學的人下次登入會收到「教學有新步驟」提示，只播放新步驟。
 
-export const TOUR_VERSION = 3;
+export const TOUR_VERSION = 4;
 export const TOUR_KEY = 'rpt.tour';
 
 // track：'all' 所有人、'collab' 只給共同協作者、'manager' 負責人（含總管理者）
@@ -20,6 +21,8 @@ export const STEPS = [
     title: '建立新行動', text: '任何人登入後都可以建立自己的行動（例如福音出訪、特會），不需要管理員事先允許。建立的人就是這個行動的負責人，素材和報導都歸在這個行動底下。' },
   { id: 'action-collabs', since: 2, track: 'manager', view: 'new', target: '[data-testid=action-form] [data-testid=collab-rows]',
     title: '先邀請協作者（選填）', text: '一列填一位共同協作者的 email，姓名選填（方便辨認）；按「＋ 再加一位」加下一位。加過的人會記在「常用聯絡人」，下次點一下就能加入。之後也能在「協作者」頁籤增減。也可以勾選「開放任何登入者投稿」。' },
+  { id: 'action-units', since: 4, track: 'manager', view: 'new', target: '[data-testid=action-form] [data-testid=units-editor]',
+    title: '單位／區域（選填）', text: '行動如果要「總報導＋各單位彙整」，在這裡按「＋ 新增單位」，一列一個名稱（例如北屯區、西屯區、青職）；在最後一列按 Enter 會自動多一列，↑／↓ 調順序。不分單位就留空。之後也能在「行動設定」修改。' },
   { id: 'action-list', since: 2, track: 'all', view: 'home', target: '[data-testid=action-list]',
     title: '我的行動', text: '這裡列出您建立的行動（負責人）和被加入的行動（共同協作者），點一下卡片就能進入。' },
   { id: 'collab-role', since: 2, track: 'collab', view: 'materials', target: '[data-testid=my-role]',
@@ -28,6 +31,8 @@ export const STEPS = [
     title: '行動頁籤', text: '「素材」上傳文字、照片、影片；「生成報導」產生網頁報導與 A4；「產出紀錄」看已存回的報導。' },
   { id: 'upload-text', since: 1, track: 'all', view: 'materials', target: '[data-testid=material-form] textarea[name=text]',
     title: '上傳文字', text: '選類型（報導或見證），填標題與文字，可以分段。還沒送出的文字會暫存在這台裝置。' },
+  { id: 'material-unit', since: 4, track: 'all', view: 'materials', target: '[data-testid=material-form] .kind-pickers',
+    title: '選擇類型與所屬單位', text: '表單上方先選類型（報導或見證）。行動有設定單位時，旁邊會多一個「單位」下拉：屬於整個行動的選「全體（總報導）」，屬於某一區或某一群的就選該單位，系統會記住上次的選擇。素材卡片上會顯示單位標籤。' },
   { id: 'upload-photos', since: 1, track: 'all', view: 'materials', target: '[data-testid=material-form] input[name=photos]',
     title: '上傳照片', text: '可以一次選多張照片，會自動縮到最長邊 1600px。照片可加圖說，有圖說的照片會優先選用。' },
   { id: 'upload-video', since: 1, track: 'all', view: 'materials', target: '[data-testid=material-form] input[name=video-url]',
@@ -46,6 +51,10 @@ export const STEPS = [
     title: '版型', text: '選擇網頁報導的版型：經典單欄、圖文交錯或雙欄專題。' },
   { id: 'gen-pages', since: 1, track: 'manager', view: 'generate', target: '[data-testid=settings] input[name=pages]',
     title: 'A4 頁數', text: '設定 A4 圖檔／PDF 要幾頁。內容放不下時會自動減字、減照片，並註明「完整內容請見網頁報導」。' },
+  { id: 'gen-unit-picks', since: 4, track: 'manager', view: 'generate', target: '[data-testid=pick-materials]',
+    title: '選擇要用的素材（依單位分組）', text: '這裡勾選這次報導要用哪些素材。行動有單位時會依單位分組，勾或取消組名就是整組選取。報導會先放全體（總報導），再依單位順序放各單位，每個單位前面有單位標題。' },
+  { id: 'gen-plan', since: 4, track: 'manager', view: 'generate', target: '[data-testid=plan-box], [data-testid=gen-a4]',
+    title: 'A4 每一頁放哪些單位', text: '素材分屬兩個以上的單位時，會出現「A4 頁面安排」：選「自動排版」由系統依單位順序接續排；選「自訂」則每一頁一列，點單位按鈕複選這一頁要放哪些單位。有頁面沒選、或有單位沒放到任何一頁時會提醒。' },
   { id: 'gen-web', since: 1, track: 'manager', view: 'generate', target: '[data-testid=gen-web]',
     title: '一鍵生成網頁報導', text: '按一下就依設定產生網頁報導並在下方預覽，可以下載單一 HTML 或存回後端。' },
   { id: 'gen-a4', since: 1, track: 'manager', view: 'generate', target: '[data-testid=gen-a4]',
@@ -53,7 +62,7 @@ export const STEPS = [
   { id: 'members', since: 2, track: 'manager', view: 'members', target: '[data-testid=add-collaborator] input[name=collaborator-email]',
     title: '新增／移除共同協作者', text: '在「協作者」頁籤輸入對方的 email（姓名選填）按「新增」，或直接點「常用聯絡人」加入，再把行動網址傳給對方；對方登入後就能上傳並編輯自己的素材。名單上每位協作者都可以按「移除」，已上傳的素材會保留。' },
   { id: 'action-settings', since: 2, track: 'manager', view: 'settings', target: '[data-testid=action-form] input[name=name]',
-    title: '行動設定', text: '「行動設定」頁籤可以修改行動名稱、日期、地點與報導預設值，只有負責人看得到。' },
+    title: '行動設定', text: '「行動設定」頁籤可以修改行動名稱、日期、地點、單位／區域與報導預設值，只有負責人看得到。' },
   { id: 'done', since: 1, track: 'all', view: 'home', target: '[data-testid=tour-replay]',
     title: '完成！', text: '教學結束。想再看一次，隨時按上方的「使用教學」。' },
 ];
@@ -157,10 +166,17 @@ export function createTour(hooks) {
           name: '教學示範行動', date: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10), place: '台中市召會',
           description: '使用教學自動建立的示範行動（示範模式資料只在這個分頁）。',
           collaborators: '', openSubmission: false, defaults: hooks.defaults,
+          units: [{ name: '北屯區' }, { name: '西屯區' }],
         });
         pick = r.action;
+        const unit = (pick.units || [])[0];
         await hooks.api.call('materials.save', {
-          actionId: pick.id, kind: 'testimony', title: '示範見證', author: '示範弟兄',
+          actionId: pick.id, kind: 'report', title: '示範總報導', author: '',
+          text: '這次行動全市各區一同配搭，同心傳揚福音。\n\n（這是使用教學自動建立的示範素材。）',
+          photos: [], videos: [],
+        });
+        await hooks.api.call('materials.save', {
+          actionId: pick.id, kind: 'testimony', title: '示範見證', author: '示範弟兄', unitId: unit ? unit.id : undefined,
           text: '主日下午弟兄姊妹一同出訪，彼此扶持，經歷主的同在。\n\n（這是使用教學自動建立的示範素材。）',
           photos: [], videos: [],
         });
