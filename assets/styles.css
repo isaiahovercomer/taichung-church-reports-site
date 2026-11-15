@@ -1817,3 +1817,61 @@ button[aria-busy='true'] {
   font-size: 18px;
   color: #b42318;
 }
+
+/* 素材表單：標題右邊選類型；素材依類別分組，每組下面「＋ 再新增一篇」 */
+.material-form-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.material-form-head h2 {
+  margin: 0;
+}
+
+.kind-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kind-picker .label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.kind-picker select {
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  width: auto;
+  min-width: 108px;
+}
+
+.material-group {
+  margin: 0 0 24px;
+}
+
+.material-group-title {
+  font-size: 17px;
+  margin: 8px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.material-group > .material-card + .material-card {
+  margin-top: 12px;
+}
+
+.add-same-kind {
+  margin-top: 12px;
+  width: 100%;
+  border-style: dashed;
+}

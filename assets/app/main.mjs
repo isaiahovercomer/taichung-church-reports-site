@@ -5,17 +5,17 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=e1f809eb5f';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=e1f809eb5f';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=e1f809eb5f';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=e1f809eb5f';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=e1f809eb5f';
-import { buildPdf } from '../report/pdf.mjs?v=e1f809eb5f';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=e1f809eb5f';
-import { createTour } from './tour.mjs?v=e1f809eb5f';
-import { createPhotoLoader } from './photos.mjs?v=e1f809eb5f';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=e1f809eb5f';
-import { createSnapshot } from './snapshot.mjs?v=e1f809eb5f';
+import { ApiError, createApi, detectMode } from './api.mjs?v=4ed3399bbb';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=4ed3399bbb';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=4ed3399bbb';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=4ed3399bbb';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=4ed3399bbb';
+import { buildPdf } from '../report/pdf.mjs?v=4ed3399bbb';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=4ed3399bbb';
+import { createTour } from './tour.mjs?v=4ed3399bbb';
+import { createPhotoLoader } from './photos.mjs?v=4ed3399bbb';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=4ed3399bbb';
+import { createSnapshot } from './snapshot.mjs?v=4ed3399bbb';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -171,7 +171,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=e1f809eb5f', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=4ed3399bbb', import.meta.url))).text();
   return cssText;
 }
 
@@ -1296,7 +1296,16 @@ function draftKey(actionId) {
 function renderMaterials(panel, action, materials, reload, data = {}) {
   const err = h('p', { class: 'errors', role: 'alert' });
   const form = { id: null, photos: [], videos: [] };
-  const kind = h('select', { name: 'kind' }, h('option', { value: 'report', text: '報導' }), h('option', { value: 'testimony', text: '見證' }));
+  const kind = h('select', { name: 'kind', 'aria-label': '要新增的素材類型' }, h('option', { value: 'report', text: '報導' }), h('option', { value: 'testimony', text: '見證' }));
+  // 送出後記住類型：同一類素材可以一篇接一篇新增
+  const lastKindKey = `rpt.lastKind.${action.id}`;
+  const lastKind = () => {
+    try {
+      return localStorage.getItem(lastKindKey) === 'testimony' ? 'testimony' : 'report';
+    } catch {
+      return 'report';
+    }
+  };
   const title = h('input', { name: 'title', maxlength: 200, required: true });
   const author = h('input', { name: 'author', maxlength: 100 });
   const text = h('textarea', { name: 'text', rows: 8, maxlength: 20000 });
@@ -1307,7 +1316,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
   const videoFile = h('input', { type: 'file', name: 'video-file', accept: 'video/*' });
   const videoProgress = h('progress', { max: 1, value: 0, hidden: true });
   const videoList = h('ul', { class: 'video-list', 'data-testid': 'video-list' });
-  const formTitle = h('h2', { text: '新增素材' });
+  const formTitle = h('h2', { class: 'material-form-title', text: '新增素材' });
   const cancelBtn = h('button', { class: 'btn', type: 'button', hidden: true, text: '取消編輯', onclick: () => resetForm() });
 
   const saveDraft = () => {
@@ -1379,7 +1388,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
       }
     }
     const src = m || draft;
-    kind.value = src.kind === 'testimony' ? 'testimony' : 'report';
+    kind.value = src.kind === 'testimony' || src.kind === 'report' ? src.kind : lastKind();
     title.value = src.title || '';
     author.value = src.author || '';
     text.value = src.text || '';
@@ -1464,8 +1473,9 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
   const editor = h(
     'form',
     { class: 'panel material-form', 'data-testid': 'material-form' },
-    formTitle,
-    h('div', { class: 'row-2' }, field('類型', kind), field('作者署名（選填）', author)),
+    // 標題右邊選類型：「新增素材 ［報導 ▾］」
+    h('div', { class: 'material-form-head' }, formTitle, h('label', { class: 'kind-picker' }, h('span', { class: 'label', text: '類型' }), kind)),
+    field('作者署名（選填）', author),
     field('標題', title),
     field('文字', text, '可以分段；未送出的文字會暫存在這台裝置，送出後以後端為準。'),
     field('照片（可多張，會縮到最長邊 1600px）', photoInput),
@@ -1488,19 +1498,34 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
         photos: form.photos.map((p) => ({ id: p.id, caption: p.caption, cover: !!p.cover })),
         videos: form.videos,
       });
-      if (!form.id) localStorage.removeItem(draftKey(action.id));
-      setStatus('素材已儲存');
+      const wasNew = !form.id;
+      if (wasNew) localStorage.removeItem(draftKey(action.id));
+      try {
+        localStorage.setItem(lastKindKey, kind.value);
+      } catch {
+        /* 忽略 */
+      }
+      const label = kind.value === 'testimony' ? '見證' : '報導';
+      setStatus(wasNew ? `${label}已儲存，可以接著新增下一篇${label}` : '素材已儲存');
       reload();
     } catch (e) {
       err.textContent = errorText(e);
     }
   });
 
-  const list = h(
-    'div',
-    { class: 'material-list', 'data-testid': 'material-list' },
-    materials.length
-      ? materials.map((m) => {
+  /** 「＋ 再新增一篇見證」：表單切到這個類型、捲過去、游標停在標題 */
+  const startNew = (k) => {
+    resetForm();
+    kind.value = k;
+    saveDraft();
+    editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    title.focus({ preventScroll: true });
+  };
+  const KINDS = [
+    ['report', '報導'],
+    ['testimony', '見證'],
+  ];
+  const card = (m) => {
           const thumbs = h('div', { class: 'thumbs' });
           for (const p of m.photos) {
             const img = h('img', { alt: p.caption || '', loading: 'lazy', 'data-photo': p.id });
@@ -1544,6 +1569,21 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
                   }),
                 )
               : null,
+          );
+  };
+  // 依類別分組，每組下面都有「＋ 再新增一篇」
+  const list = h(
+    'div',
+    { class: 'material-list', 'data-testid': 'material-list' },
+    materials.length
+      ? KINDS.map(([k, label]) => {
+          const items = materials.filter((m) => (m.kind === 'testimony' ? 'testimony' : 'report') === k);
+          return h(
+            'section',
+            { class: 'material-group', 'data-kind': k, 'data-testid': `material-group-${k}` },
+            h('h3', { class: 'material-group-title', text: `${label}（${items.length}）` }),
+            items.length ? items.map(card) : h('p', { class: 'hint', text: `還沒有${label}。` }),
+            h('button', { type: 'button', class: 'btn add-same-kind', 'data-testid': `add-${k}`, text: `＋ ${items.length ? '再新增一篇' : '新增'}${label}`, onclick: () => startNew(k) }),
           );
         })
       : h('p', { class: 'empty', text: '還沒有素材，用上面的表單上傳第一篇報導或見證吧！' }),
