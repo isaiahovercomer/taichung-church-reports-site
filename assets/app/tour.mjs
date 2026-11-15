@@ -176,14 +176,23 @@ export function createTour(hooks) {
     const vw = document.documentElement.clientWidth;
     const vh = window.innerHeight;
     const b = ui.bubble;
-    b.style.maxWidth = `${Math.min(380, vw - EDGE * 2)}px`;
+    const maxW = Math.min(380, Math.max(0, vw - EDGE * 2));
+    b.style.maxWidth = `${maxW}px`;
     const bw = b.offsetWidth;
     const bh = b.offsetHeight;
+    const clampLeft = (x) => {
+      if (bw + EDGE * 2 >= vw) return Math.max(0, (vw - bw) / 2);
+      return Math.min(vw - bw - EDGE, Math.max(EDGE, x));
+    };
+    const clampTop = (y) => {
+      if (bh + EDGE * 2 >= vh) return Math.max(0, (vh - bh) / 2);
+      return Math.min(vh - bh - EDGE, Math.max(EDGE, y));
+    };
     if (!target) {
       ui.hole.hidden = true;
       ui.root.classList.add('no-target');
-      b.style.left = `${Math.max(EDGE, (vw - bw) / 2)}px`;
-      b.style.top = `${Math.max(EDGE, (vh - bh) / 2)}px`;
+      b.style.left = `${clampLeft((vw - bw) / 2)}px`;
+      b.style.top = `${clampTop((vh - bh) / 2)}px`;
       return;
     }
     ui.root.classList.remove('no-target');
@@ -196,10 +205,9 @@ export function createTour(hooks) {
     Object.assign(ui.hole.style, { left: `${hx}px`, top: `${hy}px`, width: `${hw}px`, height: `${hh}px` });
     let top = hy + hh + GAP;
     if (top + bh > vh - EDGE) top = hy - GAP - bh;
-    if (top < EDGE) top = Math.min(vh - bh - EDGE, Math.max(EDGE, hy + hh + GAP));
-    const left = Math.min(vw - bw - EDGE, Math.max(EDGE, hx + hw / 2 - bw / 2));
-    b.style.left = `${left}px`;
-    b.style.top = `${top}px`;
+    if (top < EDGE) top = hy + hh + GAP;
+    b.style.left = `${clampLeft(hx + hw / 2 - bw / 2)}px`;
+    b.style.top = `${clampTop(top)}px`;
   }
 
   async function show(i) {
@@ -258,8 +266,12 @@ export function createTour(hooks) {
       'div',
       { class: 'tour-toast', role: 'dialog', 'data-testid': 'tour-start-prompt' },
       el('span', { text: '要不要看使用教學？' }),
-      el('button', { type: 'button', class: 'tour-btn primary', 'data-testid': 'tour-start-confirm', text: '開始', onclick: () => { box.remove(); start(); } }),
-      el('button', { type: 'button', class: 'tour-skip', 'data-testid': 'tour-start-skip', text: '略過', onclick: () => { box.remove(); writeSeen(hooks.storage, guessTrack); } }),
+      el(
+        'div',
+        { class: 'tour-toast-actions' },
+        el('button', { type: 'button', class: 'tour-btn primary', 'data-testid': 'tour-start-confirm', text: '開始', onclick: () => { box.remove(); start(); } }),
+        el('button', { type: 'button', class: 'tour-skip', 'data-testid': 'tour-start-skip', text: '略過', onclick: () => { box.remove(); writeSeen(hooks.storage, guessTrack); } }),
+      ),
     );
     document.body.append(box);
   }
@@ -283,8 +295,12 @@ export function createTour(hooks) {
       'div',
       { class: 'tour-toast', role: 'status', 'data-testid': 'tour-new' },
       el('span', { text: '使用教學有新步驟！' }),
-      el('button', { type: 'button', class: 'tour-btn primary', text: '看新步驟', onclick: () => { box.remove(); start({ onlyNew: true }); } }),
-      el('button', { type: 'button', class: 'tour-skip', text: '略過', onclick: () => { box.remove(); writeSeen(hooks.storage, track); } }),
+      el(
+        'div',
+        { class: 'tour-toast-actions' },
+        el('button', { type: 'button', class: 'tour-btn primary', text: '看新步驟', onclick: () => { box.remove(); start({ onlyNew: true }); } }),
+        el('button', { type: 'button', class: 'tour-skip', text: '略過', onclick: () => { box.remove(); writeSeen(hooks.storage, track); } }),
+      ),
     );
     document.body.append(box);
   }

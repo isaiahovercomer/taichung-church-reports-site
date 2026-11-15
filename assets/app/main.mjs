@@ -6,21 +6,21 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=7ad688132a';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=7ad688132a';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=7ad688132a';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=7ad688132a';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=7ad688132a';
-import { mountA4Editor } from '../report/a4-editor.mjs?v=7ad688132a';
-import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=7ad688132a';
-import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=7ad688132a';
-import { buildPdf } from '../report/pdf.mjs?v=7ad688132a';
-import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=7ad688132a';
-import { createTour } from './tour.mjs?v=7ad688132a';
-import { helpView } from './help.mjs?v=7ad688132a';
-import { createPhotoLoader } from './photos.mjs?v=7ad688132a';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=7ad688132a';
-import { createSnapshot } from './snapshot.mjs?v=7ad688132a';
+import { ApiError, createApi, detectMode } from './api.mjs?v=df37e48a51';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=df37e48a51';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=df37e48a51';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=df37e48a51';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=df37e48a51';
+import { mountA4Editor } from '../report/a4-editor.mjs?v=df37e48a51';
+import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=df37e48a51';
+import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=df37e48a51';
+import { buildPdf } from '../report/pdf.mjs?v=df37e48a51';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=df37e48a51';
+import { createTour } from './tour.mjs?v=df37e48a51';
+import { helpView } from './help.mjs?v=df37e48a51';
+import { createPhotoLoader } from './photos.mjs?v=df37e48a51';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=df37e48a51';
+import { createSnapshot } from './snapshot.mjs?v=df37e48a51';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 const THEME_KEY = 'rpt.report-theme';
@@ -190,7 +190,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=7ad688132a', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=df37e48a51', import.meta.url))).text();
   return cssText;
 }
 
@@ -1978,7 +1978,7 @@ function renderMembers(panel, action) {
       h('div', { class: 'contacts-box' }, h('span', { class: 'label', text: '常用聯絡人（點一下直接加入這個行動）' }), chips.el),
       h(
         'div',
-        { class: 'table-scroll', 'data-testid': 'members-list' },
+        { class: 'table-scroll members-scroll', 'data-testid': 'members-list' },
         h(
           'table',
           { class: 'table', 'data-testid': 'members-table' },
@@ -1990,12 +1990,12 @@ function renderMembers(panel, action) {
               h(
                 'tr',
                 {},
-                h('td', { 'data-testid': 'member-name', text: r.name }),
-                h('td', { text: r.email }),
-                h('td', { text: r.owner ? '負責人（管理行動與協作者）' : '共同協作者（上傳、編輯自己的素材）' }),
+                h('td', { 'data-testid': 'member-name', 'data-label': '姓名', text: r.name }),
+                h('td', { 'data-label': 'Email', text: r.email }),
+                h('td', { 'data-label': '權限', text: r.owner ? '負責人（管理行動與協作者）' : '共同協作者（上傳、編輯自己的素材）' }),
                 h(
                   'td',
-                  { class: 'row-actions' },
+                  { class: 'row-actions', 'data-label': '操作' },
                   r.owner
                     ? h('span', { class: 'hint', text: '負責人' })
                     : [

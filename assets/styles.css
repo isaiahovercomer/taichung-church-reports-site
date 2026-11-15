@@ -98,7 +98,7 @@ img {
 }
 
 .brand-text small {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--gold);
   letter-spacing: 1.5px;
 }
@@ -402,8 +402,13 @@ img {
 
 @media (min-width: 768px) {
   .card-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
     gap: 20px;
+    justify-content: start;
+  }
+  /* 行動列表只有一筆時，卡片維持可讀寬度，不要變成窄的三分之一欄 */
+  .card-grid.action-list > .card {
+    max-width: 520px;
   }
 
   .card {
@@ -678,7 +683,8 @@ img {
 
 .section-head {
   display: flex;
-  align-items: baseline;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
@@ -686,6 +692,12 @@ img {
 
 .section-title {
   margin: 0;
+}
+
+.section-head .page-title,
+.section-head .section-title {
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .more {
@@ -1159,17 +1171,6 @@ a.btn {
   color: var(--muted, #666);
 }
 
-/* 手機：輸入框字級至少 16px，iOS Safari 才不會在點選時自動放大畫面 */
-@media (max-width: 639px) {
-  .field input,
-  .field select,
-  .field textarea,
-  .material-form input,
-  .photo-item input:not([type]) {
-    font-size: 16px;
-  }
-}
-
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -1625,6 +1626,7 @@ dialog.dialog::backdrop {
   position: fixed;
   box-sizing: border-box;
   width: 380px;
+  max-width: calc(100vw - 24px);
   padding: 16px 18px 14px;
   background: #16324f;
   color: #ffffff;
@@ -1710,20 +1712,48 @@ dialog.dialog::backdrop {
   position: fixed;
   left: 50%;
   bottom: 16px;
+  /* width: max-content 避免 left:50% 只剩半個視窗可排，文字被擠成直排 */
   transform: translateX(-50%);
   z-index: 1000;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 10px 12px;
+  width: max-content;
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
-  padding: 10px 14px;
-  background: #16324f;
-  color: #ffffff;
+  padding: 12px 16px;
+  background: #f7f1e4;
+  color: #16324f;
   border: 2px solid #c9a865;
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 28px rgba(13, 33, 54, 0.28);
   font-weight: 700;
+}
+.tour-toast > span {
+  flex: 1 1 auto;
+  text-align: center;
+}
+.tour-toast-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.tour-toast .tour-btn,
+.tour-toast .tour-skip {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.tour-toast .tour-skip {
+  color: #16324f;
+}
+.tour-toast .tour-btn:focus-visible,
+.tour-toast .tour-skip:focus-visible {
+  outline-color: #16324f;
 }
 @media (prefers-reduced-motion: reduce) {
   .tour-hole {
@@ -2563,5 +2593,96 @@ button[aria-busy='true'] {
 }
 @media (max-width: 479px) {
   .theme-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .theme-card-name { font-size: 11px; }
+  .theme-card-name { font-size: 12px; }
+}
+
+/* ---------- 回應式修正：窄螢幕觸控、輸入字級、協作者卡片 ---------- */
+@media (max-width: 639px) {
+  /* 放在所有輸入框規則之後，避免被 13px 蓋掉；iOS 才不會點選時放大畫面 */
+  .field input,
+  .field select,
+  .field textarea,
+  .material-form input,
+  .photo-item input:not([type]),
+  .photo-item input[type="text"],
+  .collab-row input,
+  .inline-form input {
+    font-size: 16px;
+  }
+
+  /* 頂列「使用教學／使用說明／登出」與列表「編輯／刪除」至少 40px */
+  .app-bar .btn,
+  .app-user .btn,
+  .material-card .btn,
+  .row-actions .btn,
+  .btn.small {
+    min-height: 40px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 協作者表改為卡片，Email 與權限完整可見 */
+  .members-scroll {
+    overflow-x: visible;
+  }
+  .members-scroll .table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+    background: transparent;
+  }
+  .members-scroll thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .members-scroll tbody,
+  .members-scroll tr,
+  .members-scroll td {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .members-scroll tr {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+  }
+  .members-scroll td {
+    border-bottom: 0;
+    padding: 6px 0;
+    display: grid;
+    grid-template-columns: 4.5em 1fr;
+    gap: 8px;
+    align-items: start;
+    overflow-wrap: anywhere;
+  }
+  .members-scroll td::before {
+    content: attr(data-label);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+  .members-scroll td[data-testid='member-name'] {
+    white-space: normal;
+  }
+  .members-scroll td.row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-top: 8px;
+  }
+  .members-scroll td.row-actions::before {
+    flex: none;
+    padding: 0;
+  }
 }
