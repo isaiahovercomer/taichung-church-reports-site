@@ -1875,3 +1875,10 @@ button[aria-busy='true'] {
   width: 100%;
   border-style: dashed;
 }
+
+.site-footer .footer-version {
+  font-size: 12px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}

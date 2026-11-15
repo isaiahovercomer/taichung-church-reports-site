@@ -4,8 +4,8 @@
 // 安全原則：所有使用者欄位（標題、作者…）一律經 escapeHtml；
 // 內文只經 markdown-it（html:false），圖片只接受安全檔名，連結只接受 https/http/mailto/相對路徑。
 
-import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=4ed3399bbb';
-import { LOGO_DATA_URL } from './brand.mjs?v=4ed3399bbb';
+import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=dd011ae41b';
+import { LOGO_DATA_URL } from './brand.mjs?v=dd011ae41b';
 
 export const SITE_NAME = '台中市召會';
 export const SITE_NAME_EN = 'THE CHURCH IN TAICHUNG';
@@ -291,11 +291,25 @@ function renderHeader(root, current) {
   );
 }
 
+// 版本資訊（建置時由 scripts/build.mjs 設定）：顯示在每一頁最下方
+let BUILD_INFO = null;
+/** info：{ version, commit, date }；傳 null 清除 */
+export function setBuildInfo(info) {
+  BUILD_INFO = info || null;
+}
+/** 「版本 v1.5.0 · d011db8 · 2026-11-15」 */
+export function versionLabel(info = BUILD_INFO) {
+  if (!info || !info.version) return '';
+  return ['版本 v' + info.version, info.commit, info.date].filter(Boolean).join(' · ');
+}
 function renderFooter() {
+  const ver = versionLabel();
   return (
     `<footer class="site-footer"><div class="footer-inner">` +
     `<p class="footer-brand">${SITE_NAME}　${SITE_NAME_EN}</p>` +
     `<p>本站報導由各會所弟兄姊妹投稿協作</p>` +
+    // 協作平台登入後，main.mjs 會在 data-backend 補上後端版本
+    (ver ? `<p class="footer-version" data-testid="site-version">${e(ver)}<span data-backend-version></span></p>` : '') +
     `</div></footer>`
   );
 }

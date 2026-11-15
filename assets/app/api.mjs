@@ -5,7 +5,7 @@
 // POST 一律用 Content-Type: text/plain（Apps Script 不支援 CORS 預檢），token 放在 body 裡。
 // localStorage 只存 session token（rpt.session.<mode>）；草稿文字由 main.mjs 另外存。
 
-import { createMemoryEnv } from '../backend/memory-env.mjs?v=4ed3399bbb';
+import { createMemoryEnv } from '../backend/memory-env.mjs?v=dd011ae41b';
 
 export class ApiError extends Error {
   constructor(code, message) {

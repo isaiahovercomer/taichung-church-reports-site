@@ -5,17 +5,17 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=4ed3399bbb';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=4ed3399bbb';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=4ed3399bbb';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=4ed3399bbb';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=4ed3399bbb';
-import { buildPdf } from '../report/pdf.mjs?v=4ed3399bbb';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=4ed3399bbb';
-import { createTour } from './tour.mjs?v=4ed3399bbb';
-import { createPhotoLoader } from './photos.mjs?v=4ed3399bbb';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=4ed3399bbb';
-import { createSnapshot } from './snapshot.mjs?v=4ed3399bbb';
+import { ApiError, createApi, detectMode } from './api.mjs?v=dd011ae41b';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=dd011ae41b';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=dd011ae41b';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=dd011ae41b';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=dd011ae41b';
+import { buildPdf } from '../report/pdf.mjs?v=dd011ae41b';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=dd011ae41b';
+import { createTour } from './tour.mjs?v=dd011ae41b';
+import { createPhotoLoader } from './photos.mjs?v=dd011ae41b';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=dd011ae41b';
+import { createSnapshot } from './snapshot.mjs?v=dd011ae41b';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -171,7 +171,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=4ed3399bbb', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=dd011ae41b', import.meta.url))).text();
   return cssText;
 }
 
@@ -289,7 +289,15 @@ function showDemoCode(to, code) {
   demoBox.textContent = `示範模式不會真的寄信：寄給 ${to} 的驗證碼是 ${code}`;
 }
 
+/** 頁尾版本號後面補上後端版本（登入後才知道） */
+function showBackendVersion() {
+  const el = document.querySelector('[data-backend-version]');
+  if (!el) return;
+  const v = state.me && state.me.version;
+  el.textContent = v ? ` · 後端 v${v}` : '';
+}
 function renderBar() {
+  showBackendVersion();
   const badge =
     mode === 'demo'
       ? h('span', { class: 'mode-badge', 'data-testid': 'mode-badge', text: `示範模式${autoDemo ? '・尚未設定後端' : ''}（資料只在這個分頁，重新整理就清空）` })
