@@ -2365,3 +2365,84 @@ button[aria-busy='true'] {
   margin-bottom: 12px;
 }
 
+
+
+/* A4 拖拉編輯器：預覽改為單欄可操作頁面，不再用縮圖格 */
+.a4-pages.a4-editor,
+.a4-pages.a4-pages-editor-host {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  grid-template-columns: none;
+}
+
+.a4-pages-editor-host { width: 100%; }
+.a4-editor { outline: none; }
+.a4-editor-pages { display: flex; flex-direction: column; gap: 28px; align-items: stretch; width: 100%; }
+.a4-editor-figure { margin: 0; width: 100%; }
+.a4-editor-page { position: relative; width: 100%; margin: 0 auto; background: #fff; box-shadow: 0 2px 16px rgba(31, 45, 61, 0.14); border: 1px solid #E4E3DE; overflow: hidden; touch-action: none; }
+.a4-editor-canvas { display: block; width: 100%; height: 100%; }
+.a4-overlay { position: absolute; inset: 0; }
+.a4-frame { position: absolute; box-sizing: border-box; border: 1px dashed transparent; cursor: move; touch-action: none; }
+.a4-frame:hover { border-color: #7FB3D5; }
+.a4-frame.selected { border: 2px solid #2F6DA3; background: rgba(47, 109, 163, 0.06); }
+.a4-frame.is-locked { cursor: default; }
+.a4-frame.is-locked.selected { border-color: #5A6A7A; background: rgba(90, 106, 122, 0.08); }
+.a4-frame-image { cursor: move; }
+.a4-frame-title, .a4-frame-text, .a4-frame-caption, .a4-frame-meta { cursor: move; }
+.a4-handle { position: absolute; width: 14px; height: 14px; background: #fff; border: 2px solid #2F6DA3; border-radius: 50%; box-sizing: border-box; z-index: 5; }
+/* 熱區主要向外擴，避免矮框（標題）被南北控制點吃掉而無法拖曳 */
+.a4-handle::after { content: ""; position: absolute; }
+.a4-handle-n::after { top: -18px; left: -18px; right: -18px; height: 28px; }
+.a4-handle-s::after { bottom: -18px; left: -18px; right: -18px; height: 28px; }
+.a4-handle-e::after { right: -18px; top: -18px; bottom: -18px; width: 28px; }
+.a4-handle-w::after { left: -18px; top: -18px; bottom: -18px; width: 28px; }
+.a4-handle-nw::after, .a4-handle-ne::after, .a4-handle-se::after, .a4-handle-sw::after { width: 28px; height: 28px; }
+.a4-handle-nw::after { right: auto; bottom: auto; left: -18px; top: -18px; }
+.a4-handle-ne::after { left: auto; bottom: auto; right: -18px; top: -18px; }
+.a4-handle-se::after { left: auto; top: auto; right: -18px; bottom: -18px; }
+.a4-handle-sw::after { right: auto; top: auto; left: -18px; bottom: -18px; }
+.a4-handle-nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.a4-handle-n { left: calc(50% - 7px); top: -7px; cursor: ns-resize; }
+.a4-handle-ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.a4-handle-e { right: -7px; top: calc(50% - 7px); cursor: ew-resize; }
+.a4-handle-se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.a4-handle-s { left: calc(50% - 7px); bottom: -7px; cursor: ns-resize; }
+.a4-handle-sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.a4-handle-w { left: -7px; top: calc(50% - 7px); cursor: ew-resize; }
+.a4-guide-v { position: absolute; top: 0; bottom: 0; width: 1px; background: #C0392B; z-index: 6; pointer-events: none; }
+.a4-guide-h { position: absolute; left: 0; right: 0; height: 1px; background: #C0392B; z-index: 6; pointer-events: none; }
+.a4-text-editor { position: absolute; z-index: 8; box-sizing: border-box; padding: 6px; font: 400 16px/1.6 "Noto Sans TC", sans-serif; color: #1F2D3D; background: #fff; border: 2px solid #2F6DA3; border-radius: 4px; resize: none; outline: none; }
+.a4-crop { position: absolute; overflow: hidden; border: 2px solid #2F6DA3; box-sizing: border-box; z-index: 7; cursor: move; touch-action: none; }
+.a4-crop-img { position: absolute; max-width: none; user-select: none; pointer-events: none; }
+.a4-crop-hint { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 8px; font-size: 13px; line-height: 1.5; color: #fff; background: rgba(22, 50, 79, 0.85); border-radius: 4px; text-align: center; pointer-events: none; }
+.a4-editor-caption { margin-top: 8px; font-size: 13px; color: #5A6A7A; text-align: center; }
+.a4-page-actions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
+@media (pointer: coarse) {
+  .a4-handle { width: 22px; height: 22px; }
+  .a4-handle-nw { left: -11px; top: -11px; }
+  .a4-handle-n { left: calc(50% - 11px); top: -11px; }
+  .a4-handle-ne { right: -11px; top: -11px; }
+  .a4-handle-e { right: -11px; top: calc(50% - 11px); }
+  .a4-handle-se { right: -11px; bottom: -11px; }
+  .a4-handle-s { left: calc(50% - 11px); bottom: -11px; }
+  .a4-handle-sw { left: -11px; bottom: -11px; }
+  .a4-handle-w { left: -11px; top: calc(50% - 11px); }
+  .a4-handle-n::after, .a4-handle-s::after { height: 44px; }
+  .a4-handle-e::after, .a4-handle-w::after { width: 44px; }
+  .a4-handle-nw::after, .a4-handle-ne::after, .a4-handle-se::after, .a4-handle-sw::after { width: 44px; height: 44px; }
+  .a4-handle-n::after { top: -30px; }
+  .a4-handle-s::after { bottom: -30px; }
+  .a4-handle-e::after { right: -30px; }
+  .a4-handle-w::after { left: -30px; }
+  .a4-handle-nw::after { left: -30px; top: -30px; }
+  .a4-handle-ne::after { right: -30px; top: -30px; }
+  .a4-handle-se::after { right: -30px; bottom: -30px; }
+  .a4-handle-sw::after { left: -30px; bottom: -30px; }
+  .a4-editor-page { touch-action: none; }
+}
+@media (max-width: 640px) {
+  .a4-editor-pages { gap: 20px; }
+  .a4-text-editor { font-size: 16px; }
+}

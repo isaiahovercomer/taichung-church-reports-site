@@ -2,8 +2,8 @@
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=f3b8c882d4';
-import { LOGO_DATA_URL } from '../brand.mjs?v=f3b8c882d4';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=48b1878d06';
+import { LOGO_DATA_URL } from '../brand.mjs?v=48b1878d06';
 
 let logoPromise = null;
 /** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
@@ -49,7 +49,9 @@ function drawImage(ctx, img, op) {
     const r = op.fit === 'cover' ? Math.max(op.w / iw, op.h / ih) : Math.min(op.w / iw, op.h / ih);
     const dw = iw * r;
     const dh = ih * r;
-    ctx.drawImage(img, op.x + (op.w - dw) / 2, op.y + (op.h - dh) / 2, dw, dh);
+    const fx = op.focusX != null ? op.focusX : 0.5;
+    const fy = op.focusY != null ? op.focusY : 0.5;
+    ctx.drawImage(img, op.x + (op.w - dw) * fx, op.y + (op.h - dh) * fy, dw, dh);
   }
   ctx.restore();
 }
@@ -150,8 +152,26 @@ export function drawA4Ops(ctx, ops, images) {
   }
 }
 
-function drawPage(page, index, total, title, images) {
-  const canvas = document.createElement('canvas');
+function attachFocus(pages) {
+  for (const page of pages || []) {
+    for (const f of page.frames || []) {
+      if (f.type === 'image') {
+        if (f.focusX == null) f.focusX = 0.5;
+        if (f.focusY == null) f.focusY = 0.5;
+      }
+    }
+    for (const op of page.ops || []) {
+      if (op.op === 'image') {
+        const fr = (page.frames || []).find((f) => f.type === 'image' && f.photoId === op.photoId);
+        op.focusX = fr ? fr.focusX : (op.focusX != null ? op.focusX : 0.5);
+        op.focusY = fr ? fr.focusY : (op.focusY != null ? op.focusY : 0.5);
+      }
+    }
+  }
+  return pages;
+}
+
+function paintPage(canvas, page, index, total, title, images) {
   canvas.width = A4.width;
   canvas.height = A4.height;
   const ctx = canvas.getContext('2d');
@@ -160,6 +180,16 @@ function drawPage(page, index, total, title, images) {
   const fullbleed = (page.ops || []).some((o) => o.op === 'image' && o.x <= 0 && o.y <= 0 && o.w >= A4.width && o.h >= A4.height - 1);
   drawFooter(ctx, index, total, fullbleed);
   return canvas;
+}
+
+function drawPage(page, index, total, title, images) {
+  return paintPage(document.createElement('canvas'), page, index, total, title, images);
+}
+
+/** 把一頁重畫到既有 canvas（給編輯器）。沿用正式頁首頁尾，不會改成簡化版頁眉。 */
+export function drawA4Page(canvas, page, pageIndex, total, images, title) {
+  if (!canvas) return canvas;
+  return paintPage(canvas, page, pageIndex, total, title || '', images);
 }
 
 function photoIdsOf(comp) {
@@ -233,9 +263,14 @@ export async function renderA4(opts) {
   const { settings } = opts;
   const { images, ensureImages, imageSize } = await imageHelpers(opts.loadImage);
   const r = await fitPages({ compose: opts.compose, words: settings.words, maxPhotos: settings.maxPhotos, target: settings.pages, header: true, layout: settings.layout, metaLine: opts.metaLine, ensureImages, imageSize });
-  const canvases = r.pages.map((p, i) => drawPage(p, i, r.pages.length, r.comp.data.title, images));
+  attachFocus(r.pages);
+  const canvases = r.pages.map((p, i) => {
+    const c = drawPage(p, i, r.pages.length, r.comp.data.title, images);
+    p.canvas = c;
+    return c;
+  });
   if (r.lastResort) stampNote(canvases[canvases.length - 1]);
-  return { canvases, pages: canvases.length, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp };
+  return { canvases, pages: canvases.length, layoutPages: r.pages, images, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp };
 }
 
 /**
@@ -272,14 +307,23 @@ export async function renderA4Plan(opts) {
     );
   }
   const title = results[0].comp.data.title;
-  const canvases = results.map((r, i) => {
-    const c = drawPage(r.pages[0] || { ops: [] }, i, n, title, images);
-    if (r.lastResort) stampNote(c);
+  const layoutPages = results.map((r, i) => {
+    const page = r.pages[0] || { ops: [], frames: [] };
+    page.index = i;
+    return page;
+  });
+  attachFocus(layoutPages);
+  const canvases = layoutPages.map((page, i) => {
+    const c = drawPage(page, i, n, title, images);
+    if (results[i].lastResort) stampNote(c);
+    page.canvas = c;
     return c;
   });
   return {
     canvases,
     pages: n,
+    layoutPages,
+    images,
     truncated: results.some((r) => r.truncated),
     scale: Math.min(...results.map((r) => r.scale)),
     comps: results.map((r) => r.comp),

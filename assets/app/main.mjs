@@ -6,19 +6,20 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=f3b8c882d4';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=f3b8c882d4';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=f3b8c882d4';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=f3b8c882d4';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=f3b8c882d4';
-import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=f3b8c882d4';
-import { buildPdf } from '../report/pdf.mjs?v=f3b8c882d4';
-import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=f3b8c882d4';
-import { createTour } from './tour.mjs?v=f3b8c882d4';
-import { helpView } from './help.mjs?v=f3b8c882d4';
-import { createPhotoLoader } from './photos.mjs?v=f3b8c882d4';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=f3b8c882d4';
-import { createSnapshot } from './snapshot.mjs?v=f3b8c882d4';
+import { ApiError, createApi, detectMode } from './api.mjs?v=48b1878d06';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=48b1878d06';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=48b1878d06';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=48b1878d06';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=48b1878d06';
+import { mountA4Editor } from '../report/a4-editor.mjs?v=48b1878d06';
+import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=48b1878d06';
+import { buildPdf } from '../report/pdf.mjs?v=48b1878d06';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=48b1878d06';
+import { createTour } from './tour.mjs?v=48b1878d06';
+import { helpView } from './help.mjs?v=48b1878d06';
+import { createPhotoLoader } from './photos.mjs?v=48b1878d06';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=48b1878d06';
+import { createSnapshot } from './snapshot.mjs?v=48b1878d06';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 
@@ -176,7 +177,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=f3b8c882d4', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=48b1878d06', import.meta.url))).text();
   return cssText;
 }
 
@@ -1030,11 +1031,55 @@ function isA4Canvas(page) {
   return page instanceof HTMLCanvasElement || (page && page.nodeName === 'CANVAS');
 }
 
-/** 把 A4 結果畫進預覽區。之後的拖拉編輯器直接接在這個函式。 */
-export function renderA4Preview(container, result) {
+let a4Editor = null;
+
+function destroyA4Editor() {
+  if (!a4Editor) return;
+  try { a4Editor.destroy(); } catch (e) { /* 忽略舊編輯器清理錯誤 */ }
+  a4Editor = null;
+}
+
+function imageSizeFromResult(result) {
+  return (id) => {
+    const map = result && result.images;
+    const img = map instanceof Map ? map.get(id) : map && map[id];
+    if (!img) return null;
+    return { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height };
+  };
+}
+
+function downloadCanvasPng(canvas, name) {
+  if (!canvas) return;
+  canvas.toBlob((blob) => { if (blob) download(blob, name); }, 'image/png');
+}
+
+export function getA4Editor() {
+  return a4Editor;
+}
+
+/** 把 A4 結果畫進預覽區。有 frames 時掛上拖拉編輯器。 */
+export function renderA4Preview(container, result, opts = {}) {
+  destroyA4Editor();
   fill(container);
+  container.classList.remove('a4-pages-editor-host');
   if (!result || !Array.isArray(result.pages) || !result.pages.length) {
     container.append(h('p', { class: 'report-stats', text: '尚未生成 A4 圖檔' }));
+    return;
+  }
+  const hasFrames = result.pages.some((p) => p && Array.isArray(p.frames) && p.frames.length);
+  if (hasFrames) {
+    const base = result.fileBase || 'a4';
+    container.classList.add('a4-pages-editor-host');
+    a4Editor = mountA4Editor(container, result, {
+      measure: opts.measure || measurePreviewText,
+      imageSize: opts.imageSize || imageSizeFromResult(result),
+      confirmDialog: opts.confirmDialog,
+      onChange: typeof opts.onChange === 'function' ? opts.onChange : () => {},
+      onDownloadPage(i, page) {
+        if (typeof opts.onDownloadPage === 'function') return opts.onDownloadPage(i, page);
+        if (page && page.canvas) downloadCanvasPng(page.canvas, `${base}-p${i + 1}.png`);
+      },
+    });
     return;
   }
   const total = result.pages.length;
@@ -2453,12 +2498,14 @@ function renderGenerate(panel, action, materials) {
     publicLink.hidden = false;
   };
   const invalidateAll = () => {
+    destroyA4Editor();
     results = { web: null, a4: null };
     frame.removeAttribute('srcdoc');
     stats.textContent = '';
     wordHint.hidden = true;
     a4Info.textContent = '';
     fill(a4Pages);
+    a4Pages.classList.remove('a4-pages-editor-host');
     publicLink.hidden = true;
   };
   const setMode = (next) => {
@@ -2478,7 +2525,7 @@ function renderGenerate(panel, action, materials) {
       }
     } else if (results.a4) {
       a4Info.textContent = results.a4.statsText || '';
-      renderA4Preview(a4Pages, results.a4);
+      renderA4Preview(a4Pages, results.a4, a4PreviewOpts());
     }
   };
   tabWeb.addEventListener('click', () => setMode('web'));
@@ -2547,28 +2594,77 @@ function renderGenerate(panel, action, materials) {
     setStatus('已生成網頁報導，可預覽、下載、存回後端或發佈到網站');
   }
 
+  function a4PreviewOpts() {
+    return {
+      measure: measurePreviewText,
+      imageSize: imageSizeFromResult(results.a4),
+      confirmDialog,
+      onChange(next) {
+        if (!results.a4) results.a4 = {};
+        results.a4.pages = next.pages;
+        results.a4.canvases = next.canvases || (next.pages || []).map((p) => p.canvas).filter(Boolean);
+        results.a4.layout = next.layout;
+        results.a4.scale = next.scale;
+        results.a4.blocks = next.blocks;
+        results.a4.textEdits = next.textEdits;
+        results.a4.title = next.title;
+        results.a4.metaLine = next.metaLine;
+        if (next.cover) results.a4.cover = next.cover;
+        if (results.a4.comp && next.blocks) {
+          results.a4.comp = { ...results.a4.comp, blocks: next.blocks, data: { ...(results.a4.comp.data || {}), title: next.title } };
+        }
+      },
+    };
+  }
+
+  let allowA4Overwrite = false;
+  async function confirmDiscardA4Edits(message) {
+    if (allowA4Overwrite) return true;
+    const ed = getA4Editor();
+    if (!ed || !ed.isDirty()) return true;
+    const ok = await confirmDialog(message || '這樣做會覆蓋你在頁面上的手動調整，確定要繼續？', { title: '放棄調整？', confirmText: '確定', cancelText: '取消', testid: 'discard-a4-edits' });
+    if (ok) allowA4Overwrite = true;
+    return ok;
+  }
+
   function applyA4Result(res, s, metaLine) {
     const title = res.comp?.data?.title || res.comps?.[0]?.data?.title || action.name;
-    const statsText = `A4 共 ${res.pages} 頁（設定 ${s.pages} 頁，1240×1754 px）${res.truncated ? '・篇幅超過，已再節錄並註明「全文見網頁版」' : ''}・字級縮放 ${Math.round(res.scale * 100)}%`;
+    const layoutPages = res.layoutPages;
+    const pageCount = Array.isArray(layoutPages) ? layoutPages.length : res.pages;
+    const statsText = `A4 共 ${pageCount} 頁（設定 ${s.pages} 頁，1240×1754 px）${res.truncated ? '・篇幅超過，已再節錄並註明「全文見網頁版」' : ''}・字級縮放 ${Math.round(res.scale * 100)}%`;
+    const pages = Array.isArray(layoutPages) && layoutPages.length
+      ? layoutPages.map((p, i) => ({
+          index: p.index != null ? p.index : i,
+          frames: p.frames || [],
+          ops: p.ops || [],
+          canvas: p.canvas || (res.canvases && res.canvases[i]) || null,
+        }))
+      : (res.canvases || []).map((c) => ({ canvas: c, frames: [], ops: [] }));
+    const comp = res.comp || (res.comps ? { cover: res.comps[0].cover, blocks: res.comps.flatMap((c) => c.blocks), data: res.comps[0].data } : null);
     results.a4 = {
-      pages: res.canvases.map((c) => ({ canvas: c })),
-      canvases: res.canvases,
+      pages,
+      canvases: pages.map((p) => p.canvas).filter(Boolean),
+      images: res.images || null,
       settings: s,
       title,
       metaLine,
-      comp: res.comp || (res.comps ? { cover: res.comps[0].cover, blocks: res.comps.flatMap((c) => c.blocks) } : null),
+      comp,
+      blocks: (comp && comp.blocks) || res.blocks || null,
+      cover: (comp && comp.cover) || res.cover || null,
       outputId: results.a4?.outputId || null,
       statsText,
       truncated: res.truncated,
       scale: res.scale,
       fileBase: fileBase(),
+      layout: (s && s.layout) || res.layout || 'classic',
     };
     const used = results.a4.comp;
-    a4Info.dataset.pages = String(res.pages);
+    a4Info.dataset.pages = String(pageCount);
     a4Info.dataset.videos = String((used?.blocks || []).filter((b) => b.type === 'video').length);
     a4Info.dataset.photoIds = [used?.cover?.photoId, ...(used?.blocks || []).filter((b) => b.type === 'figure').map((b) => b.photoId)].filter(Boolean).join(',');
     a4Info.textContent = statsText;
-    renderA4Preview(a4Pages, results.a4);
+    allowA4Overwrite = false;
+    renderA4Preview(a4Pages, results.a4, a4PreviewOpts());
   }
 
   function quickLayoutPreview(s) {
@@ -2589,7 +2685,18 @@ function renderGenerate(panel, action, materials) {
         s.layout,
       );
       a4Info.textContent = `正在套用「${layoutNames[s.layout] || s.layout}」…`;
-      renderA4Preview(a4Pages, { pages: laid.pages, title: results.a4.title, fileBase: fileBase() });
+      renderA4Preview(a4Pages, {
+        pages: laid.pages,
+        title: results.a4.title,
+        fileBase: fileBase(),
+        images: results.a4.images,
+        layout: s.layout,
+        scale: results.a4.scale || 1,
+        metaLine: results.a4.metaLine || '',
+        comp: results.a4.comp,
+        blocks: (results.a4.comp && results.a4.comp.blocks) || results.a4.blocks,
+        cover: (results.a4.comp && results.a4.comp.cover) || results.a4.cover,
+      }, a4PreviewOpts());
       return true;
     } catch {
       return false;
@@ -2597,6 +2704,8 @@ function renderGenerate(panel, action, materials) {
   }
 
   async function generateA4() {
+    if (!(await confirmDiscardA4Edits('重新生成會覆蓋你在頁面上的手動調整，確定要繼續？'))) return;
+    const gen = ++previewGen;
     const s = settings.get();
     setStatus('生成 A4 圖檔中…');
     const mats = selected();
@@ -2625,6 +2734,7 @@ function renderGenerate(panel, action, materials) {
         loadImage,
       });
     }
+    if (gen !== previewGen) return;
     applyA4Result(res, s, metaLine);
     setStatus(`已生成 A4 圖檔（${layoutNames[s.layout] || s.layout}）`);
   }
@@ -2656,11 +2766,7 @@ function renderGenerate(panel, action, materials) {
     if (results.a4) quickLayoutPreview(s);
     clearTimeout(previewTimer);
     previewTimer = setTimeout(() => {
-      const n = ++previewGen;
-      guard(async () => {
-        await generateA4();
-        if (n !== previewGen) return;
-      })();
+      guard(generateA4)();
     }, immediate ? 80 : 280);
   };
 
@@ -2675,13 +2781,33 @@ function renderGenerate(panel, action, materials) {
     }
   });
   settings.a4El.addEventListener('input', (ev) => {
-    if (ev.target && ev.target.name === 'pages') {
-      if (modeCustom.checked) drawPlan();
-      if (mode === 'a4' || results.a4) scheduleA4Preview(false);
+    if (ev.target && ev.target.name === 'pages' && modeCustom.checked) drawPlan();
+  });
+  settings.a4El.addEventListener('change', (ev) => {
+    if (ev.target && ev.target.name === 'pages' && (mode === 'a4' || results.a4)) {
+      guard(async () => {
+        if (!(await confirmDiscardA4Edits('更改頁數會覆蓋你在頁面上的手動調整，確定要繼續？'))) {
+          const prev = results.a4 && results.a4.settings && results.a4.settings.pages;
+          if (prev != null) settings.set({ pages: prev });
+          return;
+        }
+        scheduleA4Preview(false);
+      })();
     }
   });
   settings.layoutGroup.addEventListener('change', () => {
-    if (mode === 'a4' || results.a4) scheduleA4Preview(true);
+    if (mode === 'a4' || results.a4) {
+      guard(async () => {
+        if (!(await confirmDiscardA4Edits('切換版型會覆蓋你在頁面上的手動調整，確定要繼續？'))) {
+          const current = results.a4 && results.a4.layout;
+          if (current) {
+            for (const r of settings.layoutGroup.querySelectorAll('input[type=radio]')) r.checked = r.value === current;
+          }
+          return;
+        }
+        scheduleA4Preview(true);
+      })();
+    }
   });
   modeAuto.addEventListener('change', () => { if (mode === 'a4' || results.a4) scheduleA4Preview(false); });
   modeCustom.addEventListener('change', () => { if (mode === 'a4' || results.a4) scheduleA4Preview(false); });

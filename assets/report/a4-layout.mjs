@@ -950,7 +950,7 @@ export function reflowPage(page, frames, ctx) {
   const cover = c.cover || page.cover || null;
   for (const f of fixed) {
     if (f.type === 'image') {
-      newPage.ops.push({ op: 'image', photoId: f.photoId, x: f.x, y: f.y, w: f.w, h: f.h, fit: f.fit || 'cover', radius: 8 });
+      newPage.ops.push({ op: 'image', photoId: f.photoId, x: f.x, y: f.y, w: f.w, h: f.h, fit: f.fit || 'cover', radius: 8, focusX: f.focusX != null ? f.focusX : 0.5, focusY: f.focusY != null ? f.focusY : 0.5 });
     } else if (f.type === 'title') {
       const tf = font(54 * s * (spec.titleScale || 1), 900);
       const lines = data.title ? wrapText(data.title, tf, f.w, m) : [];
