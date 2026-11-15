@@ -48,13 +48,21 @@ export function wrapText(text, fnt, width, measure) {
  * }
  * 回傳 { pages: [{ ops: [...] }] }
  */
-export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize }) {
+/**
+ * header：false 時是接續頁（A4 自訂每頁內容的第 2 頁以後）：不畫大標題、meta 與主圖，從頁面上方直接排內文
+ */
+export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true }) {
   const s = scale;
   const CW = A4.width - 2 * MARGIN;
   const pages = [{ ops: [] }];
   let ops = pages[0].ops;
-  let y = TOP_FIRST;
+  let y = header ? TOP_FIRST : TOP_OTHER;
   const sizeOf = (id) => imageSize(id) || { w: 4, h: 3 };
+  if (!header) {
+    data = { ...data, kicker: '', title: '' };
+    metaLine = '';
+    cover = null;
+  }
 
   // ---- 第一頁頂部（全寬）：肩題、標題、meta、細線、主圖 ----
   if (data.kicker) {
@@ -63,19 +71,21 @@ export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', sc
     y += 24 * s + 18 * s;
   }
   const tf = font(54 * s, 900);
-  for (const ln of wrapText(data.title, tf, CW, measure)) {
+  for (const ln of data.title ? wrapText(data.title, tf, CW, measure) : []) {
     ops.push({ op: 'text', x: MARGIN, y: y + 54 * s, text: ln, font: tf, color: COLORS.navy });
     y += 54 * s * 1.35;
   }
-  y += 10 * s;
-  const mf = font(23 * s);
-  for (const ln of wrapText(metaLine, mf, CW, measure)) {
-    ops.push({ op: 'text', x: MARGIN, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray });
-    y += 23 * s * 1.6;
+  if (header) {
+    y += 10 * s;
+    const mf = font(23 * s);
+    for (const ln of wrapText(metaLine, mf, CW, measure)) {
+      ops.push({ op: 'text', x: MARGIN, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray });
+      y += 23 * s * 1.6;
+    }
+    y += 14 * s;
+    ops.push({ op: 'line', x1: MARGIN, y1: y, x2: MARGIN + CW, y2: y, color: COLORS.line, width: 2 });
+    y += 30 * s;
   }
-  y += 14 * s;
-  ops.push({ op: 'line', x1: MARGIN, y1: y, x2: MARGIN + CW, y2: y, color: COLORS.line, width: 2 });
-  y += 30 * s;
   if (cover) {
     const sz = sizeOf(cover.photoId);
     const h = Math.min((CW * sz.h) / sz.w, 640 * s);
@@ -128,7 +138,24 @@ export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', sc
   }
 
   for (const b of blocks) {
-    if (b.type === 'heading') {
+    if (b.type === 'section') {
+      // 單位標題：深藍底白字橫條，佔整欄寬；後面至少要放得下兩行內文，否則換欄／換頁
+      const size = 32 * s;
+      const sf = font(size, 900);
+      const lines = wrapText(b.text, sf, colW - 40 * s, measure);
+      const lh = size * 1.5;
+      const boxH = lines.length * lh + 22 * s;
+      const top = atTop() ? 0 : 34 * s;
+      if (!fits(top + boxH + 4 * bodyLH)) nextSlot();
+      else y += top;
+      ops.push({ op: 'rect', x: colX(), y, w: colW, h: boxH, fill: COLORS.navy });
+      let ty = y + 11 * s;
+      for (const ln of lines) {
+        ops.push({ op: 'text', x: colX() + 20 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: sf, color: '#ffffff' });
+        ty += lh;
+      }
+      y += boxH + 22 * s;
+    } else if (b.type === 'heading') {
       const size = 34 * s;
       const hf = font(size, 900);
       const lines = wrapText(b.text, hf, colW - 22 * s, measure);

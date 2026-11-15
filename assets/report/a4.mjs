@@ -2,8 +2,8 @@
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=77d9d35e1f';
-import { LOGO_DATA_URL } from '../brand.mjs?v=77d9d35e1f';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=6252056ea9';
+import { LOGO_DATA_URL } from '../brand.mjs?v=6252056ea9';
 
 let logoPromise = null;
 /** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
@@ -153,6 +153,55 @@ function photoIdsOf(comp) {
 }
 
 /**
+ * 把一份內容塞進 target 頁：先試各種字級縮放，塞不下就減字數、再減照片；最後手段只留前 target 頁並註明。
+ * 回傳 { pages, comp, scale, truncated, words, lastResort }
+ */
+async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize }) {
+  let truncated = false;
+  let last = null;
+  for (let attempt = 0; attempt < 14; attempt++) {
+    const raw = await compose({ words, maxPhotos, note: truncated ? FULL_TEXT_NOTE : null });
+    // 保險：就算 compose 沒帶 print，也不讓影片區塊進 A4
+    const comp = { ...raw, blocks: raw.blocks.filter((b) => b.type !== 'video') };
+    await ensureImages(comp);
+    for (const scale of SCALES) {
+      const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header });
+      last = { res, comp, scale };
+      if (res.pages.length <= target) return { pages: res.pages, comp, scale, truncated, words, lastResort: false };
+    }
+    // 塞不下：先減字數，字數到底再減照片
+    truncated = true;
+    if (words > 150) words = Math.max(150, Math.floor(words * 0.75));
+    else if (maxPhotos > 1) maxPhotos = Math.max(1, Math.floor(maxPhotos / 2));
+    else break;
+  }
+  return { pages: last.res.pages.slice(0, target), comp: last.comp, scale: last.scale, truncated: true, words, lastResort: true };
+}
+
+function stampNote(canvas) {
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.fillRect(100, A4.height - 170, A4.width - 200, 60);
+  ctx.fillStyle = COLORS.gold;
+  ctx.textAlign = 'center';
+  ctx.font = `700 24px ${FONT_FAMILY}`;
+  ctx.fillText(FULL_TEXT_NOTE, A4.width / 2, A4.height - 130);
+}
+
+async function imageHelpers(loadImage) {
+  const images = new Map();
+  logoImg = await loadLogo();
+  const ensureImages = async (comp) => {
+    for (const id of photoIdsOf(comp)) if (!images.has(id)) images.set(id, await loadImage(id));
+  };
+  const imageSize = (id) => {
+    const img = images.get(id);
+    return img ? { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height } : null;
+  };
+  return { images, ensureImages, imageSize };
+}
+
+/**
  * opts: {
  *   compose: async ({ words, maxPhotos, note }) => composeReport({ …, print: true }) 的結果
  *   settings: { words, maxPhotos, pages, layout }
@@ -163,51 +212,58 @@ function photoIdsOf(comp) {
  */
 export async function renderA4(opts) {
   const { settings } = opts;
-  const target = settings.pages;
-  const images = new Map();
-  logoImg = await loadLogo();
-  const ensureImages = async (comp) => {
-    for (const id of photoIdsOf(comp)) if (!images.has(id)) images.set(id, await opts.loadImage(id));
-  };
-  const imageSize = (id) => {
-    const img = images.get(id);
-    return img ? { w: img.naturalWidth || img.width, h: img.naturalHeight || img.height } : null;
-  };
+  const { images, ensureImages, imageSize } = await imageHelpers(opts.loadImage);
+  const r = await fitPages({ compose: opts.compose, words: settings.words, maxPhotos: settings.maxPhotos, target: settings.pages, header: true, layout: settings.layout, metaLine: opts.metaLine, ensureImages, imageSize });
+  const canvases = r.pages.map((p, i) => drawPage(p, i, r.pages.length, r.comp.data.title, images));
+  if (r.lastResort) stampNote(canvases[canvases.length - 1]);
+  return { canvases, pages: canvases.length, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp };
+}
 
-  let words = settings.words;
-  let maxPhotos = settings.maxPhotos;
-  let truncated = false;
-  let last = null;
-  for (let attempt = 0; attempt < 14; attempt++) {
-    const raw = await opts.compose({ words, maxPhotos, note: truncated ? FULL_TEXT_NOTE : null });
-    // 保險：就算 compose 沒帶 print，也不讓影片區塊進 A4
-    const comp = { ...raw, blocks: raw.blocks.filter((b) => b.type !== 'video') };
-    await ensureImages(comp);
-    for (const scale of SCALES) {
-      const res = layoutA4({ data: comp.data, metaLine: opts.metaLine, cover: comp.cover, blocks: comp.blocks, layout: settings.layout, scale, measure, imageSize });
-      last = { res, comp, scale };
-      if (res.pages.length <= target) {
-        const canvases = res.pages.map((p, i) => drawPage(p, i, res.pages.length, comp.data.title, images));
-        return { canvases, pages: canvases.length, truncated, scale, words, comp };
-      }
-    }
-    // 塞不下：先減字數，字數到底再減照片
-    truncated = true;
-    if (words > 150) words = Math.max(150, Math.floor(words * 0.75));
-    else if (maxPhotos > 1) maxPhotos = Math.max(1, Math.floor(maxPhotos / 2));
-    else break;
+/**
+ * 自訂每一頁的內容（例如第 1 頁全體、第 2 頁北屯區＋西屯區…）：每一頁各自塞到剛好一頁。
+ * opts: {
+ *   plan: [{ compose: async ({ words, maxPhotos, note, header }) => comp }]，一頁一項
+ *   settings: { words, maxPhotos, layout }（字數與照片上限平均分給每一頁）
+ *   loadImage, metaLine
+ * }
+ * 回傳 { canvases, pages, truncated, scale（最小的）, comps }
+ */
+export async function renderA4Plan(opts) {
+  const { settings, plan } = opts;
+  const { images, ensureImages, imageSize } = await imageHelpers(opts.loadImage);
+  const n = plan.length;
+  const words = Math.max(150, Math.round(settings.words / n));
+  const maxPhotos = Math.max(1, Math.round(settings.maxPhotos / n));
+  const results = [];
+  for (let i = 0; i < n; i++) {
+    const header = i === 0;
+    results.push(
+      await fitPages({
+        compose: (o) => plan[i].compose({ ...o, header }),
+        words,
+        maxPhotos,
+        target: 1,
+        header,
+        layout: settings.layout,
+        metaLine: opts.metaLine,
+        ensureImages,
+        imageSize,
+      }),
+    );
   }
-  // 最後手段：只保留前 target 頁
-  const pages = last.res.pages.slice(0, target);
-  const canvases = pages.map((p, i) => drawPage(p, i, pages.length, last.comp.data.title, images));
-  const ctx = canvases[canvases.length - 1].getContext('2d');
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  ctx.fillRect(100, A4.height - 170, A4.width - 200, 60);
-  ctx.fillStyle = COLORS.gold;
-  ctx.textAlign = 'center';
-  ctx.font = `700 24px ${FONT_FAMILY}`;
-  ctx.fillText(FULL_TEXT_NOTE, A4.width / 2, A4.height - 130);
-  return { canvases, pages: canvases.length, truncated: true, scale: last.scale, words, comp: last.comp };
+  const title = results[0].comp.data.title;
+  const canvases = results.map((r, i) => {
+    const c = drawPage(r.pages[0] || { ops: [] }, i, n, title, images);
+    if (r.lastResort) stampNote(c);
+    return c;
+  });
+  return {
+    canvases,
+    pages: n,
+    truncated: results.some((r) => r.truncated),
+    scale: Math.min(...results.map((r) => r.scale)),
+    comps: results.map((r) => r.comp),
+  };
 }
 
 export function canvasToJpegBytes(canvas, quality = 0.9) {

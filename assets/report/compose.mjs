@@ -2,7 +2,7 @@
 // 再轉成 Markdown（給 render.mjs 生網頁）或交給 A4 排版（a4-layout.mjs）。
 // 純函式，不碰 DOM，Node 單元測試可直接 import。
 
-import { countChars } from './summarizer.mjs?v=77d9d35e1f';
+import { countChars } from './summarizer.mjs?v=6252056ea9';
 
 /** 單一素材的照片順序：主圖 → 有圖說 → 其他（同級維持原順序） */
 export function orderPhotos(photos = []) {
@@ -82,8 +82,24 @@ function safeHttpsUrl(url) {
  *   stats          // { chars, target, photos, maxPhotos, videos, maxVideos }
  * }
  */
-export async function composeReport({ action, materials, settings, summarizer, words, note, print = false }) {
+/**
+ * 依單位分組：全體（沒標單位或單位已刪除）在前，再依行動設定的單位順序。
+ * 回傳 [{ unit: { id, name } | null, materials }]，只含有素材的組。
+ */
+export function groupByUnit(materials, units = []) {
+  const known = new Set(units.map((u) => u.id));
+  const groups = [{ unit: null, materials: materials.filter((m) => !m.unitId || !known.has(m.unitId)) }];
+  for (const u of units) groups.push({ unit: u, materials: materials.filter((m) => m.unitId === u.id) });
+  return groups.filter((g) => g.materials.length);
+}
+
+export async function composeReport({ action, materials: input, settings, summarizer, words, note, print = false, noCover = false, sections = true }) {
   const target = words ?? settings.words;
+  // 有單位時：素材依單位排序，每個單位前面加單位標題（全體在最前面、不加標題）
+  const groups = sections ? groupByUnit(input, action.units || []) : [{ unit: null, materials: input }];
+  const materials = groups.flatMap((g) => g.materials);
+  const sectionAt = new Map();
+  if (groups.some((g) => g.unit)) for (const g of groups) if (g.unit) sectionAt.set(g.materials[0].id, g.unit.name);
   const summary = await summarizer.summarize({ materials, targetChars: target });
   const photos = pickPhotos(materials, settings.maxPhotos);
   const videos = print ? [] : pickVideos(materials, settings.maxVideos);
@@ -98,14 +114,16 @@ export async function composeReport({ action, materials, settings, summarizer, w
     return it.name;
   };
 
-  const main = photos.find((p) => p.isMain) || null;
+  // noCover：A4 自訂排版的第 2 頁以後沒有大圖；主圖改當一般照片放進內文
+  const main = noCover ? null : photos.find((p) => p.isMain) || null;
   const cover = main ? { photoId: main.photoId, imageName: imageName(main.photoId), caption: main.caption } : null;
 
   const blocks = [];
   materials.forEach((m, idx) => {
     const sec = summary.sections[idx] || { paragraphs: [] };
-    const myPhotos = photos.filter((p) => !p.isMain && p.materialId === m.id);
+    const myPhotos = photos.filter((p) => (!main || p.photoId !== main.photoId) && p.materialId === m.id);
     const myVideos = videos.filter((v) => v.materialId === m.id);
+    if (sectionAt.has(m.id)) blocks.push({ type: 'section', text: sectionAt.get(m.id) });
     if (!sec.paragraphs.length && !myPhotos.length && !myVideos.length) return;
     blocks.push({ type: 'heading', text: m.title, kind: m.kind, materialId: m.id });
     // 照片穿插在段落之間：第 1 段後、第 2 段後…，剩下的放在最後
@@ -166,8 +184,11 @@ export async function composeReport({ action, materials, settings, summarizer, w
 /** 區塊 → Markdown（render.mjs 的 renderBody 會把單獨成段的圖片轉成 figure） */
 export function blocksToMarkdown(blocks) {
   const out = [];
+  // 有單位標題時：單位是第二層標題，各篇素材降一層
+  const nested = blocks.some((b) => b.type === 'section');
   for (const b of blocks) {
-    if (b.type === 'heading') out.push(`## ${mdEscape(b.text)}`);
+    if (b.type === 'section') out.push(`## ${mdEscape(b.text)}`);
+    else if (b.type === 'heading') out.push(`${nested ? '###' : '##'} ${mdEscape(b.text)}`);
     else if (b.type === 'para') out.push(mdEscape(b.text));
     else if (b.type === 'figure') out.push(`![${mdEscape(b.caption)}](${b.imageName})`);
     else if (b.type === 'byline') out.push(`*${mdEscape(b.text)}*`);

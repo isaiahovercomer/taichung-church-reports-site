@@ -26,10 +26,11 @@ var RptCore = (function () {
 
   // ---------- 常數 ----------
   // version 3：合併查詢加速（boot／action.open／photos.getMany）、協作者姓名與常用聯絡人、行動錄音逐字稿（OpenAI）
+  // version 7：行動的單位／區域（units）、素材所屬單位（unitId）
   // version 6：總管理者批次刪除行動（actions.deleteMany）
   // version 5：登入時回傳首頁資料（auth.verifyCode withBoot）
   // version 4：行動日期區間（endDate）、防重複建立（requestId、同名同日合併）、刪除行動（actions.delete）
-  var RPT_VERSION_ = 6;
+  var RPT_VERSION_ = 7;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -682,6 +683,7 @@ var RptCore = (function () {
       place: a.place,
       description: a.description,
       openSubmission: !!a.openSubmission,
+      units: (a.units || []).slice(),
       defaults: normalizeSettings(a.defaults),
       myRole: myRole_(ctx, a),
       createdAt: a.createdAt,
@@ -777,7 +779,43 @@ var RptCore = (function () {
     }
     out.openSubmission = data.openSubmission === true;
     out.defaults = normalizeSettings(data.defaults);
+    // 單位／區域（選填）：素材可以標所屬單位，生成報導時依單位分段或指定每頁放哪些單位
+    if (isCreate || data.units != null) out.units = unitsInput_(data.units);
     return out;
+  }
+  /** [{ id?, name }]：名稱 1–30 字、不可重複、最多 30 個；沒有 id 的新給一個（已有的沿用，素材才對得上） */
+  function unitsInput_(list) {
+    if (list == null) return [];
+    if (Object.prototype.toString.call(list) !== '[object Array]') fail_('BAD_INPUT', '單位格式不正確');
+    var out = [];
+    var names = {};
+    for (var i = 0; i < list.length; i++) {
+      var it = list[i] || {};
+      var name = str_(isString_(it) ? it : it.name, '單位名稱', 30, false);
+      if (!name) continue;
+      var key = name.replace(/[\s\u3000]+/g, '').toLowerCase();
+      if (names[key]) fail_('BAD_INPUT', '單位名稱「' + name + '」重複了');
+      names[key] = true;
+      var id = !isString_(it) && isString_(it.id) && /^u[a-z0-9]{3,16}$/.test(it.id) ? it.id : '';
+      out.push({ id: id, name: name });
+    }
+    if (out.length > 30) fail_('BAD_INPUT', '單位最多 30 個');
+    return out;
+  }
+  /** 新單位補上 id（避免與既有 id 重複） */
+  function assignUnitIds_(env, units) {
+    var used = {};
+    var i;
+    for (i = 0; i < units.length; i++) if (units[i].id) used[units[i].id] = true;
+    for (i = 0; i < units.length; i++) {
+      if (units[i].id) continue;
+      var id;
+      do id = 'u' + env.randomHex(4);
+      while (used[id]);
+      used[id] = true;
+      units[i].id = id;
+    }
+    return units;
   }
   /** 一般使用者每天（台北日）最多建立幾個行動：任何人都能建立，避免被大量灌入 */
   function checkCreateQuota_(env, ctx) {
@@ -813,6 +851,8 @@ var RptCore = (function () {
     if (f.place) a.place = f.place;
     if (f.description) a.description = f.description;
     if (f.openSubmission) a.openSubmission = true;
+    // 單位：原本沒有才用這次填的（避免把已標好的素材單位弄亂）
+    if ((!a.units || !a.units.length) && f.units && f.units.length) a.units = assignUnitIds_(env, f.units);
     var list = (a.collaborators || []).slice();
     var add = collaboratorsFor_(f.collaborators || [], a.owners || []);
     for (var i = 0; i < add.length; i++) if (!arrayIncludes_(list, add[i]) && list.length < RPT_MAX_COLLABORATORS_) list.push(add[i]);
@@ -867,6 +907,7 @@ var RptCore = (function () {
       owners: owners,
       collaborators: collaboratorsFor_(f.collaborators, owners),
       openSubmission: f.openSubmission,
+      units: assignUnitIds_(env, f.units || []),
       defaults: f.defaults,
       createdBy: ctx.email,
       createdAt: now,
@@ -954,6 +995,7 @@ var RptCore = (function () {
     for (k in f.collaboratorNames || {}) if (hasOwn_(f.collaboratorNames, k)) mergedNames[k] = f.collaboratorNames[k];
     a.collaboratorNames = namesFor_(mergedNames, a.collaborators);
     a.openSubmission = f.openSubmission;
+    if (f.units) a.units = assignUnitIds_(env, f.units);
     a.defaults = f.defaults;
     a.updatedAt = new Date(env.now()).toISOString();
     env.withLock(function () {
@@ -1076,6 +1118,14 @@ var RptCore = (function () {
       m.videos.push(vv);
     }
     if (!m.text && !m.photos.length && !m.videos.length) fail_('BAD_INPUT', '請至少填寫文字、照片或影片其中一項');
+    // 所屬單位（選填）：空白＝全體；只能選這個行動有的單位
+    var unitId = str_(data.unitId == null ? '' : data.unitId, '單位', 20, false);
+    if (unitId) {
+      var ok = false;
+      for (var u = 0; u < (action.units || []).length; u++) if (action.units[u].id === unitId) ok = true;
+      if (!ok) fail_('BAD_INPUT', '找不到這個單位，請重新整理後再選');
+    }
+    m.unitId = unitId;
     return m;
   }
   function saveMaterial_(env, ctx, data) {
@@ -1115,6 +1165,7 @@ var RptCore = (function () {
       text: m.text,
       photos: m.photos,
       videos: m.videos,
+      unitId: m.unitId || '',
       mine: m.createdBy === ctx.email,
       canEdit: canEditMaterial_(ctx, action, m),
       createdAt: m.createdAt,

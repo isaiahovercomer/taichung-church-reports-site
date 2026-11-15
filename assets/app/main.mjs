@@ -5,17 +5,17 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=77d9d35e1f';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=77d9d35e1f';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=77d9d35e1f';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=77d9d35e1f';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=77d9d35e1f';
-import { buildPdf } from '../report/pdf.mjs?v=77d9d35e1f';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=77d9d35e1f';
-import { createTour } from './tour.mjs?v=77d9d35e1f';
-import { createPhotoLoader } from './photos.mjs?v=77d9d35e1f';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=77d9d35e1f';
-import { createSnapshot } from './snapshot.mjs?v=77d9d35e1f';
+import { ApiError, createApi, detectMode } from './api.mjs?v=6252056ea9';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=6252056ea9';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=6252056ea9';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=6252056ea9';
+import { canvasToJpegBytes, renderA4, renderA4Plan } from '../report/a4.mjs?v=6252056ea9';
+import { buildPdf } from '../report/pdf.mjs?v=6252056ea9';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=6252056ea9';
+import { createTour } from './tour.mjs?v=6252056ea9';
+import { createPhotoLoader } from './photos.mjs?v=6252056ea9';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=6252056ea9';
+import { createSnapshot } from './snapshot.mjs?v=6252056ea9';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -171,7 +171,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=77d9d35e1f', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=6252056ea9', import.meta.url))).text();
   return cssText;
 }
 
@@ -840,8 +840,87 @@ function collaboratorEditor(initial = []) {
   };
 }
 
+// ---------- 單位／區域（行動裡要分開彙整的單位） ----------
+/** 一列一個單位，可上下移動、刪除；一列裡用頓號／逗號分隔也會拆成多個 */
+function unitsEditor(initial = [], { hasMaterials = () => false } = {}) {
+  const rowsEl = h('div', { class: 'unit-rows', 'data-testid': 'unit-rows' });
+  const rows = [];
+  const redrawMoves = () =>
+    rows.forEach((r, i) => {
+      r.up.disabled = i === 0;
+      r.down.disabled = i === rows.length - 1;
+    });
+  function addRow(u = { id: '', name: '' }, focus = false) {
+    const name = h('input', { name: 'unit-name', maxlength: 60, placeholder: '例如：北屯區、青職、大專', value: u.name, 'aria-label': '單位名稱' });
+    const r = { id: u.id, name };
+    const move = (d) => {
+      const i = rows.indexOf(r);
+      const j = i + d;
+      if (j < 0 || j >= rows.length) return;
+      rows.splice(i, 1);
+      rows.splice(j, 0, r);
+      rowsEl.replaceChildren(...rows.map((x) => x.row));
+      redrawMoves();
+      name.focus();
+    };
+    r.up = h('button', { type: 'button', class: 'btn small', text: '↑', 'aria-label': '往上移', onclick: () => move(-1) });
+    r.down = h('button', { type: 'button', class: 'btn small', text: '↓', 'aria-label': '往下移', onclick: () => move(1) });
+    r.row = h(
+      'div',
+      { class: 'unit-row' },
+      name,
+      r.up,
+      r.down,
+      h('button', {
+        type: 'button',
+        class: 'btn small',
+        text: '刪除',
+        'aria-label': '刪除這個單位',
+        onclick: () => {
+          if (r.id && hasMaterials(r.id) && !confirm(`「${name.value}」已經有素材標了這個單位，刪除後那些素材會歸到「全體」。確定刪除？`)) return;
+          rows.splice(rows.indexOf(r), 1);
+          r.row.remove();
+          redrawMoves();
+        },
+      }),
+    );
+    // 在最後一列按 Enter：新增下一列
+    name.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.isComposing) {
+        ev.preventDefault();
+        if (rows.indexOf(r) === rows.length - 1 && name.value.trim()) addRow(undefined, true);
+        else rows[rows.indexOf(r) + 1]?.name.focus();
+      }
+    });
+    rows.push(r);
+    rowsEl.append(r.row);
+    redrawMoves();
+    if (focus) name.focus();
+  }
+  for (const u of initial) addRow(u);
+  const el = h(
+    'fieldset',
+    { class: 'field units-field', 'data-testid': 'units-editor' },
+    h('legend', { class: 'label', text: '單位／區域（選填）' }),
+    h('p', { class: 'hint', text: '行動裡要分開彙整的單位，例如各區、各會所或各年齡層。上傳素材時可以選所屬單位，生成報導時會依單位分段，也可以指定 A4 每一頁放哪些單位。不分單位就留空。' }),
+    rowsEl,
+    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn small', 'data-testid': 'add-unit', text: '＋ 新增單位', onclick: () => addRow(undefined, true) })),
+  );
+  return {
+    el,
+    get() {
+      const out = [];
+      for (const r of rows) {
+        const parts = r.name.value.split(/[、,，;；\n]+/).map((x) => x.trim()).filter(Boolean);
+        parts.forEach((name, k) => out.push(k === 0 && r.id ? { id: r.id, name } : { name }));
+      }
+      return out;
+    },
+  };
+}
+
 // ---------- 建立／編輯行動 ----------
-function actionForm(action, onSubmit) {
+function actionForm(action, onSubmit, opts = {}) {
   const isSuper = state.me.role === 'super';
   const a = action || { name: '', date: taipeiToday(), endDate: '', place: '', description: '', owners: [], collaborators: [], openSubmission: false, defaults: Core.PRESETS[1] };
   const f = {
@@ -854,6 +933,7 @@ function actionForm(action, onSubmit) {
     openSubmission: h('input', { type: 'checkbox', name: 'openSubmission', checked: !!a.openSubmission }),
   };
   const collabs = action ? null : collaboratorEditor();
+  const units = unitsEditor(a.units || [], { hasMaterials: (id) => (opts.materials || []).some((m) => m.unitId === id) });
   // 這張表單的請求編號：網路重送或重按也只會建立一次（失敗後重送沿用同一個）
   const requestId = action ? null : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   const settings = settingsControls(a.defaults);
@@ -871,6 +951,7 @@ function actionForm(action, onSubmit) {
     h('div', { class: 'row-2' }, field('開始日期', f.date), field('結束日期（選填）', f.endDate, '多天的行動才填，例如 11/4～11/6；一天的行動留空')),
     field('地點', f.place),
     field('說明', f.description),
+    units.el,
     ownersField,
     // 協作者：建立時可先填；建立後改到「協作者」頁籤逐一新增／移除
     action
@@ -904,7 +985,21 @@ function actionForm(action, onSubmit) {
       description: f.description.value,
       openSubmission: f.openSubmission.checked,
       defaults: settings.get(),
+      units: units.get(),
     };
+    const seen = new Set();
+    for (const u of data.units) {
+      const k = u.name.replace(/\s+/g, '').toLowerCase();
+      if (u.name.length > 30) {
+        err.textContent = `單位名稱「${u.name}」太長（最多 30 字）`;
+        return;
+      }
+      if (seen.has(k)) {
+        err.textContent = `單位名稱「${u.name}」重複了`;
+        return;
+      }
+      seen.add(k);
+    }
     if (!action) {
       const bad = collabs.validate();
       if (bad) {
@@ -1271,7 +1366,7 @@ async function renderAction(id, tab, { force = false } = {}) {
         await api.call('actions.update', { ...data, id, collaborators: action.collaborators || [] });
         setStatus('已儲存行動設定');
         reload();
-      }),
+      }, { materials }),
       deleteActionBox(action, materials),
     );
 }
@@ -1440,6 +1535,24 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
   const err = h('p', { class: 'errors', role: 'alert' });
   const form = { id: null, photos: [], videos: [] };
   const kind = h('select', { name: 'kind', 'aria-label': '要新增的素材類型' }, h('option', { value: 'report', text: '報導' }), h('option', { value: 'testimony', text: '見證' }));
+  // 所屬單位（行動有設定單位才顯示）：空白＝全體
+  const units = action.units || [];
+  const unitName = (id) => units.find((u) => u.id === id)?.name || '';
+  const unit = h(
+    'select',
+    { name: 'unit', 'aria-label': '所屬單位' },
+    h('option', { value: '', text: '全體（總報導）' }),
+    units.map((u) => h('option', { value: u.id, text: u.name })),
+  );
+  const lastUnitKey = `rpt.lastUnit.${action.id}`;
+  const lastUnit = () => {
+    try {
+      const v = localStorage.getItem(lastUnitKey) || '';
+      return unitName(v) ? v : '';
+    } catch {
+      return '';
+    }
+  };
   // 送出後記住類型：同一類素材可以一篇接一篇新增
   const lastKindKey = `rpt.lastKind.${action.id}`;
   const lastKind = () => {
@@ -1465,12 +1578,12 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
   const saveDraft = () => {
     if (form.id) return;
     try {
-      localStorage.setItem(draftKey(action.id), JSON.stringify({ kind: kind.value, title: title.value, author: author.value, text: text.value }));
+      localStorage.setItem(draftKey(action.id), JSON.stringify({ kind: kind.value, unitId: unit.value, title: title.value, author: author.value, text: text.value }));
     } catch {
       /* 忽略 */
     }
   };
-  for (const el of [kind, title, author, text]) el.addEventListener('input', saveDraft);
+  for (const el of [kind, unit, title, author, text]) el.addEventListener('input', saveDraft);
 
   function drawPhotos() {
     fill(photoList, 
@@ -1532,6 +1645,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
     }
     const src = m || draft;
     kind.value = src.kind === 'testimony' || src.kind === 'report' ? src.kind : lastKind();
+    unit.value = src.unitId != null && (src.unitId === '' || unitName(src.unitId)) ? src.unitId : m ? '' : lastUnit();
     title.value = src.title || '';
     author.value = src.author || '';
     text.value = src.text || '';
@@ -1617,7 +1731,17 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
     'form',
     { class: 'panel material-form', 'data-testid': 'material-form' },
     // 標題右邊選類型：「新增素材 ［報導 ▾］」
-    h('div', { class: 'material-form-head' }, formTitle, h('label', { class: 'kind-picker' }, h('span', { class: 'label', text: '類型' }), kind)),
+    h(
+      'div',
+      { class: 'material-form-head' },
+      formTitle,
+      h(
+        'span',
+        { class: 'kind-pickers' },
+        h('label', { class: 'kind-picker' }, h('span', { class: 'label', text: '類型' }), kind),
+        units.length ? h('label', { class: 'kind-picker' }, h('span', { class: 'label', text: '單位' }), unit) : null,
+      ),
+    ),
     field('作者署名（選填）', author),
     field('標題', title),
     field('文字', text, '可以分段；未送出的文字會暫存在這台裝置，送出後以後端為準。'),
@@ -1635,6 +1759,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
         actionId: action.id,
         id: form.id || undefined,
         kind: kind.value,
+        unitId: units.length ? unit.value : undefined,
         title: title.value,
         author: author.value,
         text: text.value,
@@ -1645,10 +1770,11 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
       if (wasNew) localStorage.removeItem(draftKey(action.id));
       try {
         localStorage.setItem(lastKindKey, kind.value);
+        localStorage.setItem(lastUnitKey, unit.value);
       } catch {
         /* 忽略 */
       }
-      const label = kind.value === 'testimony' ? '見證' : '報導';
+      const label = (unitName(unit.value) ? `${unitName(unit.value)}的` : '') + (kind.value === 'testimony' ? '見證' : '報導');
       setStatus(wasNew ? `${label}已儲存，可以接著新增下一篇${label}` : '素材已儲存');
       reload();
     } catch (e) {
@@ -1678,7 +1804,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
           return h(
             'article',
             { class: 'material-card', 'data-material': m.id },
-            h('span', { class: 'card-cat', text: m.kind === 'testimony' ? '見證' : '報導' }),
+            h('span', { class: 'card-cat', text: m.kind === 'testimony' ? '見證' : '報導' }, units.length ? h('span', { class: 'unit-badge', 'data-testid': 'unit-badge', text: unitName(m.unitId) || '全體' }) : null),
             h('h3', { class: 'material-title', text: m.title }),
             m.author ? h('p', { class: 'hint', text: `作者：${m.author}` }) : null,
             m.text ? h('p', { class: 'material-text', text: m.text.length > 240 ? `${m.text.slice(0, 240)}…` : m.text }) : null,
@@ -1758,12 +1884,109 @@ function renderGenerate(panel, action, materials) {
   const configured = createSummarizer(config);
   if (configured !== ruleBasedSummarizer) summarizers.push(configured);
   const sumSelect = h('select', { name: 'summarizer' }, summarizers.map((s, i) => h('option', { value: String(i), text: s.name })));
+  // ---- 使用的素材：有單位時依單位分組，每組可以一次全勾／全不勾 ----
+  const units = action.units || [];
+  const knownUnit = new Set(units.map((u) => u.id));
+  const unitKey = (m) => (m.unitId && knownUnit.has(m.unitId) ? m.unitId : '');
+  const UNIT_ALL = { id: '', name: '全體' };
+  const pickRow = (m) => h('label', { class: 'checkbox' }, h('input', { type: 'checkbox', name: 'use-material', value: m.id, 'data-unit': unitKey(m), checked: true }), `${m.kind === 'testimony' ? '［見證］' : '［報導］'}${m.title}`);
   const picks = h(
     'fieldset',
     { class: 'field material-picks' },
     h('legend', { class: 'label', text: '使用的素材' }),
-    materials.map((m) => h('label', { class: 'checkbox' }, h('input', { type: 'checkbox', name: 'use-material', value: m.id, checked: true }), `${m.kind === 'testimony' ? '［見證］' : '［報導］'}${m.title}`)),
+    units.length
+      ? groupByUnit(materials, units).map((g) => {
+          const u = g.unit || UNIT_ALL;
+          const all = h('input', { type: 'checkbox', name: 'use-unit', value: u.id, checked: true });
+          const box = h('div', { class: 'pick-group', 'data-unit-group': u.id }, h('label', { class: 'checkbox pick-group-head' }, all, h('b', { text: `${u.name}（${g.materials.length}）` })), h('div', { class: 'pick-group-items' }, g.materials.map(pickRow)));
+          const items = () => [...box.querySelectorAll('input[name=use-material]')];
+          all.addEventListener('change', () => items().forEach((i) => (i.checked = all.checked)));
+          box.addEventListener('change', (ev) => {
+            if (ev.target === all) return;
+            const n = items().filter((i) => i.checked).length;
+            all.checked = n === items().length;
+            all.indeterminate = n > 0 && n < items().length;
+          });
+          return box;
+        })
+      : materials.map(pickRow),
   );
+
+  // ---- A4 頁面安排（有單位才顯示）：自動依單位接續排，或自訂每一頁放哪些單位 ----
+  const unitOptions = [UNIT_ALL, ...units].filter((u) => materials.some((m) => unitKey(m) === u.id));
+  const plan = []; // plan[i] = Set(unitId)
+  const planMode = h('div', { class: 'plan-mode', role: 'radiogroup', 'aria-label': 'A4 頁面安排' });
+  const modeAuto = h('input', { type: 'radio', name: 'plan-mode', value: 'auto', checked: true });
+  const modeCustom = h('input', { type: 'radio', name: 'plan-mode', value: 'custom' });
+  const planRows = h('div', { class: 'plan-rows', 'data-testid': 'plan-rows', hidden: true });
+  const planWarn = h('p', { class: 'hint plan-warn', 'data-testid': 'plan-warn' });
+  /** 預設：把單位依序平均分到各頁 */
+  function defaultPlan(n) {
+    const out = Array.from({ length: n }, () => new Set());
+    unitOptions.forEach((u, i) => out[Math.min(n - 1, Math.floor((i * n) / Math.max(unitOptions.length, 1)))].add(u.id));
+    // 頁數比單位多：多出來的頁接著放最後一組
+    for (let i = 0; i < n; i++) if (!out[i].size && unitOptions.length) out[i].add(unitOptions[Math.min(i, unitOptions.length - 1)].id);
+    return out;
+  }
+  function drawPlan() {
+    const n = Math.max(1, Number(settings.get().pages) || 1);
+    if (plan.length !== n) {
+      const def = defaultPlan(n);
+      plan.length = n;
+      for (let i = 0; i < n; i++) if (!plan[i]) plan[i] = def[i];
+    }
+    fill(
+      planRows,
+      plan.map((sel, i) =>
+        h(
+          'div',
+          { class: 'plan-row', 'data-page': String(i + 1) },
+          h('span', { class: 'plan-page', text: `第 ${i + 1} 頁` }),
+          h(
+            'span',
+            { class: 'plan-chips' },
+            unitOptions.map((u) =>
+              h(
+                'label',
+                { class: `plan-chip${sel.has(u.id) ? ' on' : ''}`, 'data-unit': u.id },
+                h('input', {
+                  type: 'checkbox',
+                  name: `plan-${i + 1}`,
+                  value: u.id,
+                  checked: sel.has(u.id),
+                  onchange: (ev) => {
+                    if (ev.target.checked) sel.add(u.id);
+                    else sel.delete(u.id);
+                    lastA4 = null;
+                    drawPlan();
+                  },
+                }),
+                u.name,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    // 提醒：哪一頁沒選、哪個單位沒放到任何一頁
+    const empty = plan.map((s2, i) => (s2.size ? null : i + 1)).filter(Boolean);
+    const placed = new Set(plan.flatMap((s2) => [...s2]));
+    const missing = unitOptions.filter((u) => !placed.has(u.id)).map((u) => u.name);
+    planWarn.textContent = [empty.length ? `第 ${empty.join('、')} 頁還沒選單位` : '', missing.length ? `「${missing.join('、')}」沒有放在任何一頁` : ''].filter(Boolean).join('；');
+  }
+  const syncMode = () => {
+    planRows.hidden = !modeCustom.checked;
+    planWarn.hidden = !modeCustom.checked;
+    if (modeCustom.checked) drawPlan();
+  };
+  modeAuto.addEventListener('change', syncMode);
+  modeCustom.addEventListener('change', syncMode);
+  fill(
+    planMode,
+    h('label', { class: 'checkbox' }, modeAuto, h('span', { text: '自動排版：依單位順序接續排（全體在前，每個單位有標題）' })),
+    h('label', { class: 'checkbox' }, modeCustom, h('span', { text: '自訂每一頁放哪些單位（可複選）' })),
+  );
+  const planBox = unitOptions.length > 1 ? h('fieldset', { class: 'field plan-box', 'data-testid': 'plan-box' }, h('legend', { class: 'label', text: 'A4 頁面安排' }), planMode, planRows, planWarn) : null;
   const err = h('p', { class: 'errors', role: 'alert' });
   const stats = h('p', { class: 'report-stats', 'data-testid': 'report-stats' });
   const frame = h('iframe', { class: 'preview-frame', title: '報導預覽', sandbox: '', 'data-testid': 'report-preview' });
@@ -1780,6 +2003,9 @@ function renderGenerate(panel, action, materials) {
     el.addEventListener('input', invalidate);
     el.addEventListener('change', invalidate);
   }
+  // 頁數改了：自訂頁面安排跟著增減列
+  settings.el.addEventListener('input', () => modeCustom.checked && drawPlan());
+  settings.el.addEventListener('click', (ev) => ev.target.closest('[data-preset]') && setTimeout(() => modeCustom.checked && drawPlan(), 0));
   settings.el.addEventListener('click', (ev) => {
     if (ev.target.closest('[data-preset]')) invalidate();
   });
@@ -1824,12 +2050,31 @@ function renderGenerate(panel, action, materials) {
     const s = settings.get();
     setStatus('生成 A4 圖檔中…');
     const mats = selected();
-    const res = await renderA4({
-      settings: s,
-      metaLine: [formatDateRange(action.date, action.endDate), action.place ? `地點：${action.place}` : '', `作者：${[...new Set(mats.map((m) => m.author).filter(Boolean))].join('、') || '行動報導小組'}`].filter(Boolean).join('　'),
-      compose: ({ words, maxPhotos, note }) => composeReport({ action, materials: mats, settings: { ...s, maxPhotos }, summarizer: summarizer(), words, note, print: true }),
-      loadImage: async (photoId) => loadImg(await photoDataUrl(action.id, photoId)),
-    });
+    const metaLine = [formatDateRange(action.date, action.endDate), action.place ? `地點：${action.place}` : '', `作者：${[...new Set(mats.map((m) => m.author).filter(Boolean))].join('、') || '行動報導小組'}`].filter(Boolean).join('　');
+    const loadImage = async (photoId) => loadImg(await photoDataUrl(action.id, photoId));
+    let res;
+    if (planBox && modeCustom.checked) {
+      drawPlan();
+      const pagesMats = plan.map((sel) => mats.filter((m) => sel.has(unitKey(m))));
+      const bad = pagesMats.map((list, i) => (list.length ? null : i + 1)).filter(Boolean);
+      if (bad.length) throw new Error(`第 ${bad.join('、')} 頁選的單位沒有勾選的素材，請在「A4 頁面安排」調整，或勾選那些單位的素材`);
+      res = await renderA4Plan({
+        settings: s,
+        metaLine,
+        loadImage,
+        plan: pagesMats.map((list) => ({
+          compose: ({ words, maxPhotos, note, header }) => composeReport({ action, materials: list, settings: { ...s, maxPhotos }, summarizer: summarizer(), words, note, print: true, noCover: !header }),
+        })),
+      });
+      res.comp = { cover: res.comps[0].cover, blocks: res.comps.flatMap((c) => c.blocks) };
+    } else {
+      res = await renderA4({
+        settings: s,
+        metaLine,
+        compose: ({ words, maxPhotos, note }) => composeReport({ action, materials: mats, settings: { ...s, maxPhotos }, summarizer: summarizer(), words, note, print: true }),
+        loadImage,
+      });
+    }
     lastA4 = { canvases: res.canvases, settings: s };
     const base = safeFileName(`${action.date}-${action.name}`);
     fill(a4Pages, 
@@ -1861,7 +2106,7 @@ function renderGenerate(panel, action, materials) {
   }
 
   fill(panel, 
-    h('section', { class: 'panel' }, h('h2', { text: '報導設定' }), settings.el, field('文字節錄方式', sumSelect), picks),
+    h('section', { class: 'panel' }, h('h2', { text: '報導設定' }), settings.el, field('文字節錄方式', sumSelect), picks, planBox),
     h(
       'div',
       { class: 'actions generate-actions' },
