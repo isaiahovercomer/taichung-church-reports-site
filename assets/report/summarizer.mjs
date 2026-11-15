@@ -98,16 +98,49 @@ function summarizeSync(materials, targetChars) {
     });
   }
 
-  const sections = parsed.map((p, k) => {
-    const byPara = new Map();
-    p.sentences.forEach((s, i) => {
-      if (!chosen[k].pick.has(i)) return;
-      if (!byPara.has(s.pi)) byPara.set(s.pi, []);
-      byPara.get(s.pi).push(s.text);
+  function buildSections() {
+    return parsed.map((p, k) => {
+      const byPara = new Map();
+      p.sentences.forEach((s, i) => {
+        if (!chosen[k].pick.has(i)) return;
+        if (!byPara.has(s.pi)) byPara.set(s.pi, []);
+        byPara.get(s.pi).push({ i, text: s.text });
+      });
+      const keys = [...byPara.keys()].sort((a, b) => a - b);
+      const paragraphs = keys.map((pi, pk) => {
+        const list = byPara.get(pi);
+        let out = '';
+        for (let j = 0; j < list.length; j++) {
+          const cur = list[j];
+          if (j > 0 && cur.i !== list[j - 1].i + 1 && !/……$/.test(out)) out += '……';
+          out = out ? joinSentences([out, cur.text]) : cur.text;
+        }
+        const next = pk < keys.length - 1 ? byPara.get(keys[pk + 1])[0] : null;
+        const last = list[list.length - 1];
+        if (next && last && next.i !== last.i + 1 && !/……$/.test(out)) out += '……';
+        return out;
+      });
+      const chars = paragraphs.reduce((a, para) => a + countChars(para), 0);
+      return { materialId: p.m.id, paragraphs, chars, truncated: chosen[k].pick.size < p.sentences.length };
     });
-    const paragraphs = [...byPara.keys()].sort((a, b) => a - b).map((pi) => joinSentences(byPara.get(pi)));
-    return { materialId: p.m.id, paragraphs, chars: chosen[k].used, truncated: chosen[k].pick.size < p.sentences.length };
-  });
+  }
+
+  let sections = buildSections();
+  // 刪節號也算字數；超過目標時從中段句子讓出額度，仍保留每篇開頭與結尾句
+  while (sections.reduce((a, s) => a + s.chars, 0) > targetChars) {
+    let dropped = false;
+    for (let k = chosen.length - 1; k >= 0 && !dropped; k--) {
+      const last = parsed[k].sentences.length - 1;
+      const mid = [...chosen[k].pick].filter((i) => i !== 0 && i !== last).sort((a, b) => b - a);
+      if (!mid.length) continue;
+      const i = mid[0];
+      chosen[k].pick.delete(i);
+      chosen[k].used -= parsed[k].sentences[i].chars;
+      dropped = true;
+    }
+    if (!dropped) break;
+    sections = buildSections();
+  }
   return { sections, totalChars: sections.reduce((a, s) => a + s.chars, 0) };
 }
 

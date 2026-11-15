@@ -2,7 +2,7 @@
 // 再轉成 Markdown（給 render.mjs 生網頁）或交給 A4 排版（a4-layout.mjs）。
 // 純函式，不碰 DOM，Node 單元測試可直接 import。
 
-import { countChars } from './summarizer.mjs?v=f6c935fec3';
+import { countChars } from './summarizer.mjs?v=7ad688132a';
 
 /** 單一素材的照片順序：主圖 → 有圖說 → 其他（同級維持原順序） */
 export function orderPhotos(photos = []) {
@@ -19,32 +19,82 @@ export function videoCoverIds(materials) {
   return ids;
 }
 
+/** 依照片物件上的寬高或 imageSize(id) 判斷方向；沒有尺寸時回 null。 */
+export function photoOrientation(p, imageSize) {
+  const fromObj = p && ((p.w > 0 && p.h > 0) ? { w: p.w, h: p.h } : (p.width > 0 && p.height > 0) ? { w: p.width, h: p.height } : null);
+  const sz = fromObj || (imageSize && p && p.id ? imageSize(p.id) : null);
+  if (!sz || !(sz.w > 0 && sz.h > 0)) return null;
+  const r = sz.w / sz.h;
+  if (r < 0.95) return 'portrait';
+  if (r > 1.15) return 'landscape';
+  return 'square';
+}
+
 /**
  * 挑照片：先選主圖（第一個標了主圖的素材；沒有就用第一張照片），
- * 其餘在各素材之間輪流平均分配，每個素材內有圖說的優先。max 含主圖。
+ * 其餘優先給還沒有照片的素材各一張，再在各素材之間輪流平均分配。
+ * 每個素材內有圖說的優先；若知道尺寸，直圖與橫圖輪流取用。max 含主圖。
  * 影片封面不算照片，一律排除。
  * 回傳 [{ photoId, materialId, caption, isMain }]
  */
-export function pickPhotos(materials, max) {
+export function pickPhotos(materials, max, imageSize) {
   const covers = videoCoverIds(materials);
   const lists = materials.map((m) => ({ id: m.id, list: orderPhotos((m.photos || []).filter((p) => !covers.has(p.id))) }));
   const out = [];
   if (!(max > 0)) return out;
+  const kindOf = (p) => photoOrientation(p, imageSize);
+  const preferOf = () => {
+    const kinds = out.map((x) => x.kind).filter((k) => k === 'portrait' || k === 'landscape');
+    const nLand = kinds.filter((k) => k === 'landscape').length;
+    const nPort = kinds.filter((k) => k === 'portrait').length;
+    if (nLand > nPort) return 'portrait';
+    if (nPort > nLand) return 'landscape';
+    const last = kinds[kinds.length - 1];
+    if (last === 'landscape') return 'portrait';
+    if (last === 'portrait') return 'landscape';
+    return null;
+  };
+  const takeFrom = (l, prefer) => {
+    if (!l.list.length) return null;
+    if (prefer) {
+      const i = l.list.findIndex((p) => kindOf(p) === prefer);
+      if (i >= 0) return l.list.splice(i, 1)[0];
+    }
+    return l.list.shift();
+  };
+  const push = (p, l, isMain) => {
+    out.push({ photoId: p.id, materialId: l.id, caption: String(p.caption || '').trim(), isMain: !!isMain, kind: kindOf(p) });
+  };
   const mainSrc = lists.find((l) => l.list.length && l.list[0].cover) || lists.find((l) => l.list.length);
   if (!mainSrc) return out;
   const main = mainSrc.list.shift();
-  out.push({ photoId: main.id, materialId: mainSrc.id, caption: String(main.caption || '').trim(), isMain: true });
-  // 主圖來源素材已經「用掉一張」，輪流從下一個素材開始
-  let start = (lists.indexOf(mainSrc) + 1) % lists.length;
-  while (out.length < max && lists.some((l) => l.list.length)) {
+  push(main, mainSrc, true);
+  const hasPicked = new Set([mainSrc.id]);
+  let cursor = (lists.indexOf(mainSrc) + 1) % lists.length;
+  const cycle = (filterEmpty) => {
+    let moved = false;
     for (let k = 0; k < lists.length && out.length < max; k++) {
-      const l = lists[(start + k) % lists.length];
-      const p = l.list.shift();
-      if (p) out.push({ photoId: p.id, materialId: l.id, caption: String(p.caption || '').trim(), isMain: false });
+      const l = lists[(cursor + k) % lists.length];
+      if (!l.list.length) continue;
+      if (filterEmpty && hasPicked.has(l.id)) continue;
+      const p = takeFrom(l, preferOf());
+      if (p) {
+        push(p, l, false);
+        hasPicked.add(l.id);
+        cursor = (lists.indexOf(l) + 1) % lists.length;
+        moved = true;
+      }
     }
-    start = 0;
+    return moved;
+  };
+  // 先讓還沒有照片的素材各得一張，再從同一游標輪流補滿
+  while (out.length < max && lists.some((l) => l.list.length && !hasPicked.has(l.id))) {
+    if (!cycle(true)) break;
   }
-  return out;
+  while (out.length < max && lists.some((l) => l.list.length)) {
+    if (!cycle(false)) break;
+  }
+  return out.map(({ kind, ...rest }) => rest);
 }
 
 /** 挑影片：各素材輪流。keepKeys 為 materialId:索引 時只取清單內影片 */
@@ -138,20 +188,14 @@ export async function composeReport({ action, materials: input, settings, summar
     if (sectionAt.has(m.id)) blocks.push({ type: 'section', text: sectionAt.get(m.id) });
     if (!sec.paragraphs.length && !myPhotos.length && !myVideos.length) return;
     if (m.title) blocks.push({ type: 'heading', text: m.title, kind: m.kind, materialId: m.id });
-    // 照片穿插在段落之間：第 1 段後、第 2 段後…，剩下的放在最後
-    const queue = [...myPhotos];
+    // 先排完全部內文，署名緊接在內文後、照片前，避免署名落到下一頁或出現在照片之後
     sec.paragraphs.forEach((p, pi) => {
       let text = p;
       if (sec.truncated && pi === sec.paragraphs.length - 1 && text && !/……$/.test(text)) text += '……';
       blocks.push({ type: 'para', text, materialId: m.id });
-      const ph = queue.shift();
-      if (ph) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
     });
-    for (const ph of queue) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
-    if (m.author) {
-      const by = m.kind === 'testimony' ? `—— ${m.author}` : `文／${m.author}`;
-      blocks.push({ type: 'byline', text: by, materialId: m.id });
-    }
+    if (m.author) blocks.push({ type: 'byline', text: print ? `文／${m.author}` : `—— ${m.author}`, materialId: m.id });
+    for (const ph of myPhotos) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
     for (const v of myVideos) {
       const url = safeHttpsUrl(v.url);
       if (!url) continue;

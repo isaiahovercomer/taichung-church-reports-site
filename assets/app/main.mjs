@@ -6,21 +6,21 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=f6c935fec3';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=f6c935fec3';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=f6c935fec3';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=f6c935fec3';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=f6c935fec3';
-import { mountA4Editor } from '../report/a4-editor.mjs?v=f6c935fec3';
-import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=f6c935fec3';
-import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=f6c935fec3';
-import { buildPdf } from '../report/pdf.mjs?v=f6c935fec3';
-import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=f6c935fec3';
-import { createTour } from './tour.mjs?v=f6c935fec3';
-import { helpView } from './help.mjs?v=f6c935fec3';
-import { createPhotoLoader } from './photos.mjs?v=f6c935fec3';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=f6c935fec3';
-import { createSnapshot } from './snapshot.mjs?v=f6c935fec3';
+import { ApiError, createApi, detectMode } from './api.mjs?v=7ad688132a';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=7ad688132a';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=7ad688132a';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=7ad688132a';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=7ad688132a';
+import { mountA4Editor } from '../report/a4-editor.mjs?v=7ad688132a';
+import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=7ad688132a';
+import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=7ad688132a';
+import { buildPdf } from '../report/pdf.mjs?v=7ad688132a';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=7ad688132a';
+import { createTour } from './tour.mjs?v=7ad688132a';
+import { helpView } from './help.mjs?v=7ad688132a';
+import { createPhotoLoader } from './photos.mjs?v=7ad688132a';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=7ad688132a';
+import { createSnapshot } from './snapshot.mjs?v=7ad688132a';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 const THEME_KEY = 'rpt.report-theme';
@@ -190,7 +190,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=f6c935fec3', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=7ad688132a', import.meta.url))).text();
   return cssText;
 }
 
@@ -2652,6 +2652,14 @@ function renderGenerate(panel, action, materials) {
         if (results.a4.comp && next.blocks) {
           results.a4.comp = { ...results.a4.comp, blocks: next.blocks, data: { ...(results.a4.comp.data || {}), title: next.title } };
         }
+        const pageCount = (next.pages || []).length;
+        a4Info.dataset.pages = String(pageCount);
+        const s = results.a4.settings || {};
+        const scale = next.scale != null ? next.scale : results.a4.scale || 1;
+        const truncated = results.a4.truncated;
+        const maxPages = s.pages != null ? s.pages : pageCount;
+        results.a4.statsText = `A4 實際產出 ${pageCount} 頁（最多 ${maxPages} 頁，1240×1754 px）${truncated ? '・篇幅超過，已再節錄並註明「全文見網頁版」' : ''}・本版型字級 ${Math.round(scale * 100)}%`;
+        a4Info.textContent = results.a4.statsText;
       },
     };
   }

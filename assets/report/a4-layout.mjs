@@ -28,6 +28,15 @@ export const SAFE_MARGIN = Math.round((15 / 25.4) * DPI);
 export const DEFAULT_FOCUS_X = 0.5;
 export const DEFAULT_FOCUS_Y = 0.4;
 export const PHOTO_ASPECT = { portrait: 3 / 4, landscape: 3 / 2, square: 1, bannerMax: 16 / 9 };
+/** 橫圖框最小高度：不扁於 16:9，且至少為框寬的 50%。 */
+export function minLandscapeHeight(frameW) {
+  const w = Math.max(1, frameW);
+  return Math.max(w / PHOTO_ASPECT.bannerMax, w * 0.5);
+}
+export function framesOverlap(a, b, pad = 0) {
+  if (!a || !b) return false;
+  return a.x < b.x + b.w + pad && a.x + a.w > b.x - pad && a.y < b.y + b.h + pad && a.y + a.h > b.y - pad;
+}
 export const TYPE_RATIO = { title: 2.2, heading: 1.4, meta: 0.85, caption: 0.85 };
 export const BODY_PX = 27;
 export const BODY_PX_TRI = 24;
@@ -488,6 +497,94 @@ function jumpPastObstacles(st, lh) {
   return st.y <= BOTTOM;
 }
 
+function bumpPastOverlaps(st, rect) {
+  const frames = (st.page && st.page.frames) || [];
+  let moved = false;
+  for (const f of frames) {
+    if (!f || (f.type !== 'heading' && f.type !== 'title' && f.type !== 'meta' && f.type !== 'image' && f.type !== 'quote')) continue;
+    if (framesOverlap(rect, f, 4)) {
+      st.y = Math.max(st.y, f.y + f.h + 12 * (st.s || 1));
+      moved = true;
+    }
+  }
+  return !moved;
+}
+
+function takeLastBodyLines(st, n) {
+  const col = colRect(st);
+  const ops = st.page.ops || [];
+  const picked = [];
+  for (let i = ops.length - 1; i >= 0 && picked.length < n; i--) {
+    const o = ops[i];
+    if (o.op === 'image') break;
+    if (o.op !== 'text' || o.color !== PAL.text) {
+      if (o.op === 'text' && /文／|——/.test(String(o.text || ''))) break;
+      continue;
+    }
+    if (o.x < col.x - 4 || o.x > col.x + col.w) break;
+    picked.push({ i, o });
+  }
+  picked.reverse();
+  if (!picked.length) return '';
+  const lh = st.bodyLH;
+  const size = st.bodySize;
+  const text = picked.map((x) => x.o.text).join('');
+  const firstY = picked[0].o.y - (lh + size * 0.72) / 2;
+  for (let k = picked.length - 1; k >= 0; k--) ops.splice(picked[k].i, 1);
+  const frames = st.page.frames || [];
+  for (const x of picked) {
+    for (let fi = frames.length - 1; fi >= 0; fi--) {
+      const f = frames[fi];
+      if (f.type !== 'text') continue;
+      if (Math.abs(f.x - col.x) > 4) continue;
+      if (x.o.y >= f.y - 2 && x.o.y <= f.y + f.h + 4) {
+        f.h = Math.max(0, x.o.y - (lh + size * 0.72) / 2 - f.y);
+        if (f.h < lh * 0.5) frames.splice(fi, 1);
+        break;
+      }
+    }
+  }
+  st.y = Math.min(st.y, Math.max(col.y, firstY));
+  return text;
+}
+
+function emitBodyLines(st, text, idx) {
+  if (!text || !String(text).trim()) return;
+  const col = colRect(st);
+  const tokens = String(text).match(TOKEN_RE) || [];
+  let line = '';
+  let startY = st.y;
+  let lines = 0;
+  const flush = () => {
+    if (lines > 0) {
+      st.page.frames.push({ id: nextId(st, 'text'), type: 'text', x: col.x, y: startY, w: col.w, h: lines * st.bodyLH, blockIndex: idx });
+      lines = 0;
+    }
+  };
+  const emit = () => {
+    const seg = currentSeg(st, st.bodyLH) || { x: col.x, w: col.w };
+    st.page.ops.push({ op: 'text', x: seg.x, y: st.y + (st.bodyLH + st.bodySize * 0.72) / 2, text: line, font: st.bf, color: PAL.text });
+    st.y += st.bodyLH;
+    lines++;
+    line = '';
+  };
+  for (let ti = 0; ti < tokens.length; ) {
+    if (st.y + st.bodyLH > BOTTOM) { flush(); if (!nextSlot(st)) return String(line + tokens.slice(ti).join('')); startY = st.y; continue; }
+    const tok = tokens[ti];
+    const seg = currentSeg(st, st.bodyLH);
+    const width = (seg ? seg.w : col.w) - 4;
+    if (line && st.measure(line + tok, st.bf) > width && !NO_LINE_START.includes(tok[0])) { emit(); continue; }
+    line += tok;
+    ti++;
+  }
+  if (line.trim()) {
+    if (st.y + st.bodyLH > BOTTOM) { flush(); if (!nextSlot(st)) return line; startY = st.y; }
+    emit();
+  }
+  flush();
+  return '';
+}
+
 
 function flowPara(st, b, idx) {
   const s = st.s;
@@ -592,6 +689,11 @@ function flowSectionHeading(st, b, idx, kind) {
     jumpPastObstacles(st, boxH);
   }
   st.y += top;
+  bumpPastOverlaps(st, { x: barX, y: st.y, w: barW, h: boxH });
+  if (st.y + boxH + 3 * st.bodyLH > BOTTOM) {
+    if (!nextSlot(st)) return false;
+    jumpPastObstacles(st, boxH);
+  }
   if (isSection) {
     st.page.frames.push({ id: nextId(st, 'heading'), type: 'heading', x: barX, y: st.y, w: barW, h: boxH, blockIndex: idx });
     st.page.ops.push({ op: 'rect', x: barX, y: st.y, w: barW, h: boxH, fill: PAL.navy });
@@ -620,21 +722,14 @@ function flowSectionHeading(st, b, idx, kind) {
 }
 
 
-function flowByline(st, b, idx) {
+function placeBylineOps(st, b, idx, lines) {
   const s = st.s;
   const col = colRect(st);
   const quoteMode = !!st.spec.quote;
   const size = st.bodySize;
   const fnt = font(size, 700);
   const lh = st.bodyLH;
-  const lines = wrapText(b.text, fnt, col.w, st.measure);
   const total = lines.length * lh;
-  if (!jumpPastObstacles(st, total)) {
-    if (!nextSlot(st)) return false;
-  }
-  if (st.y + total > BOTTOM) {
-    if (!nextSlot(st)) return false;
-  }
   const frameY = st.y;
   st.page.frames.push({ id: nextId(st, 'text'), type: 'text', x: col.x, y: frameY, w: col.w, h: quoteMode ? total + 20 * s : total, blockIndex: idx });
   for (const ln of lines) {
@@ -648,6 +743,43 @@ function flowByline(st, b, idx) {
   }
   st.y += 10 * s;
   return true;
+}
+
+function flowByline(st, b, idx) {
+  const col = colRect(st);
+  const size = st.bodySize;
+  const fnt = font(size, 700);
+  const lh = st.bodyLH;
+  const lines = wrapText(b.text, fnt, col.w, st.measure);
+  const total = lines.length * lh;
+  if (!jumpPastObstacles(st, total)) {
+    const pulled = takeLastBodyLines(st, 2);
+    if (!nextSlot(st)) return pulled ? { prefix: pulled } : false;
+    if (pulled) {
+      const left = emitBodyLines(st, pulled, idx);
+      if (left) return { prefix: left };
+    }
+  }
+  const aloneAtTop = atTop(st) && st.y + total <= BOTTOM;
+  if (st.y + total > BOTTOM || (aloneAtTop && st.col > 0 && st.y <= col.y + 1)) {
+    const pulled = takeLastBodyLines(st, 2);
+    if (st.y + (pulled ? 2 * lh : 0) + total > BOTTOM) {
+      if (!nextSlot(st)) return pulled ? { prefix: pulled } : false;
+    }
+    if (pulled) {
+      const left = emitBodyLines(st, pulled, idx);
+      if (left) return { prefix: left };
+    }
+  }
+  if (st.y + total > BOTTOM) {
+    const pulled = takeLastBodyLines(st, 2);
+    if (!nextSlot(st)) return pulled ? { prefix: pulled } : false;
+    if (pulled) {
+      const left = emitBodyLines(st, pulled, idx);
+      if (left) return { prefix: left };
+    }
+  }
+  return placeBylineOps(st, b, idx, wrapText(b.text, fnt, colRect(st).w, st.measure));
 }
 
 
@@ -690,7 +822,7 @@ function placeFigure(st, b, idx) {
   const isCard = mode === 'card';
   const bannerPortrait = isBanner && kind === 'portrait';
   const pad = 18 * s;
-  const minH = 160 * s;
+  const minH = kind === 'portrait' ? 160 * s : Math.max(160 * s, minLandscapeHeight(isWrap ? colW * (spec.photoW || 0.4) : (isCard ? colW - 32 * s : colW)));
   let w, h, ix, iy = st.y;
   let wrapThis = isWrap;
   if (isBanner && !bannerPortrait) {
@@ -760,10 +892,10 @@ function placeFigure(st, b, idx) {
         if (!moveToNext()) return 'pageFull';
         if (iy + h + capSpace + cardExtra + pad > BOTTOM) {
           const room2 = roomFor(iy);
-          if (room2 < 80 * s) return 'pageFull';
+          if (room2 < minH) return 'pageFull';
           applyFrame(w, room2);
         }
-      } else if (room >= 80 * s) applyFrame(w, room);
+      } else if (room >= minH) applyFrame(w, room);
       else return 'pageFull';
       if (isWrap) {
         const left = mode === 'right' ? false : (st.figIndex % 2 === 0);
@@ -771,9 +903,27 @@ function placeFigure(st, b, idx) {
       } else ix = col.x + (col.w - w) / 2;
     }
   }
+  // 橫圖若被縮到比 16:9 更扁或明顯窄於欄寬，改換欄／換頁，避免裁成細條
+  if (kind !== 'portrait' && h + 1 < minLandscapeHeight(w) - 1) {
+    if (st.y > col.y + 0.5 || st.col < st.cols.length - 1) {
+      if (!moveToNext()) return 'pageFull';
+    } else return 'pageFull';
+  }
+  if (!isWrap && kind !== 'portrait' && w < colW * 0.45 && (st.y > col.y + 0.5 || st.col < st.cols.length - 1)) {
+    if (!moveToNext()) return 'pageFull';
+  }
+  bumpPastOverlaps(st, { x: ix, y: iy, w, h });
+  if (st.y > iy + 1) {
+    iy = st.y + (isCard ? 16 * s : 0);
+    if (iy + h + capSpace + cardExtra + pad > BOTTOM) return 'pageFull';
+  }
   const effTotal = h + capSpace + (isCard ? 32 * s : 0);
   if (isCard) {
-    st.page.ops.push({ op: 'rect', x: col.x, y: iy - 16 * s, w: colW, h: effTotal + 32 * s, fill: PAL.paper });
+    const cardX = ix - 16 * s;
+    const cardW = w + 32 * s;
+    const cardY = iy - 16 * s;
+    const cardH = h + capSpace + 32 * s;
+    st.page.ops.push({ op: 'rect', x: cardX, y: cardY, w: cardW, h: cardH, fill: PAL.paper });
   }
   const imgFrame = { id: nextId(st, 'image'), type: 'image', x: ix, y: iy, w: w, h: h, locked: false, photoId: b.photoId, fit: 'cover', blockIndex: idx, focusX: DEFAULT_FOCUS_X, focusY: DEFAULT_FOCUS_Y };
   st.page.frames.push(imgFrame);
@@ -796,11 +946,11 @@ function placeFigure(st, b, idx) {
   st.obstacles.push({
     x: wrapThis ? (leftFig ? ix : ix - wrapPad) : col.x,
     y: isCard ? iy - 16 * s : iy,
-    w: wrapThis ? w + wrapPad : col.w,
-    h: (isCard ? effTotal + 32 * s : effTotal) + 8 * s,
+    w: wrapThis ? w + wrapPad : (isCard ? w + 32 * s : col.w),
+    h: (isCard ? h + capSpace + 32 * s : effTotal) + 8 * s,
   });
   if (wrapThis) st.y = iy;
-  else st.y = (isCard ? iy - 16 * s : iy) + (isCard ? effTotal + 32 * s : effTotal) + pad;
+  else st.y = (isCard ? iy - 16 * s : iy) + (isCard ? h + capSpace + 32 * s : effTotal) + pad;
   st.figIndex++;
   return 'done';
 }
@@ -882,10 +1032,19 @@ function placeCollageTrio(st, figs) {
   const smallW = (col.w - gap) * 0.38;
   const largeW = col.w - gap - smallW;
   const szA = sizeOf(st.imageSize, a.b.photoId);
+  const szB = sizeOf(st.imageSize, b.b.photoId);
+  const szC = sizeOf(st.imageSize, c.b.photoId);
   const largeFr = frameSizeForPhoto(szA, largeW, Math.min(520 * s, BOTTOM - st.y - 80 * s));
   const smallH = (largeFr.h - gap) / 2;
   const smallAspect = smallW / smallH;
-  if (smallAspect > PHOTO_ASPECT.bannerMax || smallH < 70 * s) return placeFigurePair(st, a.b, b.b, a.idx, b.idx);
+  const cellOk = (sz, ww, hh) => {
+    const kind = photoKind(sz);
+    const fr = ww / Math.max(1, hh);
+    if (kind === 'portrait' && fr > 1.15) return false;
+    if (kind === 'landscape' && (fr < 0.9 || fr > PHOTO_ASPECT.bannerMax + 0.05)) return false;
+    return true;
+  };
+  if (smallH < 70 * s || !cellOk(szA, largeFr.w, largeFr.h) || !cellOk(szB, smallW, smallH) || !cellOk(szC, smallW, smallH)) return 'fallback';
   const y0 = st.y;
   const totalH = largeFr.h;
   if (y0 + totalH + 60 * s > BOTTOM && !atTop(st)) {
@@ -937,7 +1096,7 @@ function flowOnePage(st, blocks, startIdx) {
           idx += 1; continue;
         }
         const r = placeCollageTrio(st, nxt.slice(0, 3));
-        if (r === 'pageFull') {
+        if (r === 'pageFull' || r === 'fallback') {
           const r2 = placeFigurePair(st, nxt[0].b, nxt[1].b, nxt[0].idx, nxt[1].idx);
           if (r2 === 'pageFull') break;
           idx += 2; continue;
@@ -961,8 +1120,38 @@ function flowOnePage(st, blocks, startIdx) {
       idx++; continue;
     }
     if (b.type === 'section') { if (!flowSectionHeading(st, b, idx, 'section')) break; idx++; continue; }
-    if (b.type === 'heading') { if (!flowSectionHeading(st, b, idx, 'heading')) break; idx++; continue; }
-    if (b.type === 'byline') { if (!flowByline(st, b, idx)) break; idx++; continue; }
+    if (b.type === 'heading') {
+      const snap = { col: st.col, y: st.y, frames: st.page.frames.length, ops: st.page.ops.length };
+      if (!flowSectionHeading(st, b, idx, 'heading')) break;
+      const next = blocks[idx + 1];
+      if (next && next.type === 'para') {
+        const headingCol = st.col;
+        const headingY = st.y;
+        const r = flowPara(st, next, idx + 1);
+        const sameColLines = (st.page.ops || []).filter((o) => o.op === 'text' && o.color === PAL.text && o.y >= headingY - 2 && o.x >= st.cols[headingCol].x - 4 && o.x <= st.cols[headingCol].x + st.cols[headingCol].w).length;
+        if (sameColLines < 1) {
+          // 標題與內文被拆到不同欄：撤回後改與內文一起換欄／換頁
+          st.page.frames.length = snap.frames;
+          st.page.ops.length = snap.ops;
+          st.col = snap.col;
+          st.y = snap.y;
+          if (!nextSlot(st)) break;
+          continue;
+        }
+        if (r && r.remaining != null && r.remaining.trim()) { blocks[idx + 1] = { ...next, text: r.remaining }; idx += 1; break; }
+        idx += 2; continue;
+      }
+      idx++; continue;
+    }
+    if (b.type === 'byline') {
+      const r = flowByline(st, b, idx);
+      if (r && r.prefix) {
+        blocks.splice(idx, 0, { type: 'para', text: r.prefix, materialId: b.materialId });
+        break;
+      }
+      if (!r) break;
+      idx++; continue;
+    }
     if (b.type === 'note') { if (!flowNote(st, b, idx)) break; idx++; continue; }
     const r = flowPara(st, { ...b, text: String(b.text ?? '') }, idx);
     if (r && r.remaining != null && r.remaining.trim()) { blocks[idx] = { ...b, text: r.remaining }; break; }
@@ -1220,7 +1409,9 @@ function splitBlocksByShare(list, n) {
     groups[g].push(b);
     used += blockChars(b);
     const isHead = b.type === 'heading' || b.type === 'section';
-    if (g < n - 1 && used >= share * (g + 1) && !isHead) g++;
+    const next = list[i + 1];
+    const keepWith = b.type === 'byline' || (next && next.type === 'byline');
+    if (g < n - 1 && used >= share * (g + 1) && !isHead && !keepWith) g++;
   }
   return groups;
 }
@@ -1279,7 +1470,7 @@ function layoutSpread({ data, metaLine, cover, blocks, scale, measure, imageSize
     const roomy = BOTTOM - (geom.cols[0] ? geom.cols[0].y : TOP_OTHER) >= 200;
     const nextIdx = flowOnePage(st, chunk, 0);
     if (nextIdx < chunk.length) overflow = chunk.slice(nextIdx);
-    else if (chunk.length && nextIdx === 0 && page.frames.length === framesBefore && roomy) overflow = chunk.slice(1);
+    else if (chunk.length && nextIdx === 0 && page.frames.length === framesBefore && roomy) { const b = chunk[0]; const empty = !b || (b.type !== "figure" && b.type !== "heading" && b.type !== "section" && b.type !== "byline" && !String(b.text || "").trim()); if (empty) overflow = chunk.slice(1); else overflow = chunk.slice(); }
     pageIndex++;
     if (!pending() && (shortText || photoIdx >= photos.length)) break;
     if (!pending() && photoIdx < photos.length) break;
@@ -1354,7 +1545,11 @@ function layoutA4Inner({ data, metaLine, cover, blocks, layout = 'classic', scal
     const roomy = BOTTOM - (geom.cols[0] ? geom.cols[0].y : TOP_OTHER) >= 200;
     const nextIdx = flowOnePage(st, list, idx);
     if (nextIdx > idx) idx = nextIdx;
-    else if (idx < list.length && page.frames.length === framesBefore && roomy) idx++;
+    else if (idx < list.length && page.frames.length === framesBefore && roomy) {
+      const b = list[idx];
+      const empty = !b || b.type === 'video' || (b.type !== 'figure' && b.type !== 'heading' && b.type !== 'section' && b.type !== 'byline' && !String(b.text || '').trim());
+      if (empty) idx++;
+    }
     pageIndex++;
     if (idx >= list.length) break;
   }

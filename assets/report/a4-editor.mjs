@@ -2,8 +2,8 @@
 // 照片預設保持比例，按住 Shift 才自由縮放；標題／文字／圖說預設自由縮放，按住 Shift 才等比例。
 // 拖曳中只用 rAF 更新疊層與參考線，放開後才解重疊、補空隙並呼叫 reflowPage，溢出接到下一頁。
 
-import { reflowPage } from './a4-layout.mjs?v=f6c935fec3';
-import { drawA4Ops, drawA4Page } from './a4.mjs?v=f6c935fec3';
+import { reflowPage } from './a4-layout.mjs?v=7ad688132a';
+import { drawA4Ops, drawA4Page } from './a4.mjs?v=7ad688132a';
 
 export const A4_WIDTH = 1240;
 export const A4_HEIGHT = 1754;
@@ -13,6 +13,45 @@ export const SNAP_THRESHOLD = 8;
 
 export function clone(v) { return v == null ? v : JSON.parse(JSON.stringify(v)); }
 export function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+export function headerChromeHeight(pageIndex) {
+  return (pageIndex || 0) === 0 ? 137 : 96;
+}
+
+export function forbiddenRects(page, pageIndex, movingId) {
+  const top = headerChromeHeight(pageIndex != null ? pageIndex : page && page.index);
+  const rects = [{ x: 0, y: 0, w: A4_WIDTH, h: top, kind: 'chrome' }];
+  for (const f of (page && page.frames) || []) {
+    if (!f || (f.type !== 'title' && f.type !== 'meta')) continue;
+    if (movingId && f.id === movingId) continue;
+    rects.push({ x: f.x, y: f.y, w: f.w, h: f.h, kind: f.type, id: f.id });
+  }
+  return rects;
+}
+
+export function rectsOverlap(a, b, pad = 0) {
+  if (!a || !b) return false;
+  return a.x < b.x + b.w + pad && a.x + a.w > b.x - pad && a.y < b.y + b.h + pad && a.y + a.h > b.y - pad;
+}
+
+/** 把會蓋住標題／meta／頁首的框推到禁區外。 */
+export function clampOutOfForbidden(frame, rects, pageIndex) {
+  const next = { ...frame };
+  const top = headerChromeHeight(pageIndex);
+  next.x = clamp(next.x, 0, A4_WIDTH - next.w);
+  next.y = clamp(next.y, top, A4_HEIGHT - next.h);
+  for (const r of rects || []) {
+    if (r.id && r.id === frame.id) continue;
+    if (!rectsOverlap(next, r, 2)) continue;
+    const below = r.y + r.h + 8;
+    if (below + next.h <= A4_BOTTOM) next.y = below;
+    else if (r.x + r.w + 8 + next.w <= A4_WIDTH) next.x = r.x + r.w + 8;
+    else if (r.x - 8 - next.w >= 0) next.x = r.x - 8 - next.w;
+    next.x = clamp(next.x, 0, A4_WIDTH - next.w);
+    next.y = clamp(next.y, top, A4_HEIGHT - next.h);
+  }
+  return next;
+}
 
 function fallbackMeasure(text, font) {
   const m = /(\d+(?:\.\d+)?)px/.exec(String(font || ''));
@@ -179,10 +218,6 @@ export function resizeFrame(frame, handle, dx, dy, keepRatio) {
   w = clamp(w, minW, A4_WIDTH - x);
   h = clamp(h, minH, A4_HEIGHT - y);
   return { ...f, x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-}
-
-export function rectsOverlap(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
 export function resolvePhotoOverlaps(frames, opts) {
@@ -470,11 +505,15 @@ export function mountA4Editor(container, result, opts) {
     pages.forEach((p, i) => { p.canvas = oldCanvases[i] || null; });
   }
   function commitEdit(pinned) {
-    pages.forEach((p) => { p.frames = resolvePhotoOverlaps(p.frames || []); });
+    pages.forEach((p, i) => {
+      const rects = forbiddenRects(p, i);
+      p.frames = (p.frames || []).map((f) => (f.type === 'title' || f.type === 'meta') ? f : clampOutOfForbidden(f, rects.filter((r) => r.id !== f.id), i));
+      p.frames = resolvePhotoOverlaps(p.frames || []);
+    });
     reflowFromPage(dragState ? dragState.pageIndex : 0, pinned || null);
+    pushHistory();
     redrawAllCanvases();
     render();
-    pushHistory();
     syncResult();
     onChange(result);
   }
@@ -602,6 +641,22 @@ export function mountA4Editor(container, result, opts) {
       }
       wrap.appendChild(fig);
     });
+    const bar = document.createElement('div');
+    bar.className = 'a4-editor-toolbar';
+    bar.setAttribute('data-testid', 'a4-editor-toolbar');
+    const mkBtn = (label, testid, fn, enabled) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn a4-editor-' + testid;
+      btn.setAttribute('data-testid', 'a4-' + testid);
+      btn.textContent = label;
+      btn.disabled = !enabled;
+      btn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(); });
+      return btn;
+    };
+    bar.appendChild(mkBtn('復原', 'undo', () => undo(), history.canUndo()));
+    bar.appendChild(mkBtn('重做', 'redo', () => redo(), history.canRedo()));
+    container.appendChild(bar);
     container.appendChild(wrap);
     updateSelection();
   }
@@ -831,8 +886,12 @@ export function mountA4Editor(container, result, opts) {
       const moved = { ...dragState.orig, x: dragState.orig.x + dxA4, y: dragState.orig.y + dyA4 };
       const others = (page.frames || []).filter((f) => f.id !== fr.id);
       const snap = computeSnap(moved, others, { layout: layoutId, displayScale, threshold: SNAP_THRESHOLD });
-      fr.x = Math.round(clamp(moved.x + snap.dx, 0, A4_WIDTH - fr.w));
-      fr.y = Math.round(clamp(moved.y + snap.dy, 0, A4_HEIGHT - fr.h));
+      const raw = { ...moved, x: moved.x + snap.dx, y: moved.y + snap.dy };
+      const safe = fr.type === 'title' || fr.type === 'meta'
+        ? { ...raw, x: clamp(raw.x, 0, A4_WIDTH - fr.w), y: clamp(raw.y, 0, A4_HEIGHT - fr.h) }
+        : clampOutOfForbidden(raw, forbiddenRects(page, dragState.pageIndex, fr.id), dragState.pageIndex);
+      fr.x = Math.round(safe.x);
+      fr.y = Math.round(safe.y);
       dragState.moved = true;
       const pageEl = container.querySelector('.a4-editor-page[data-page-index="' + dragState.pageIndex + '"]');
       if (pageEl) showGuides(pageEl, snap.guides);
@@ -842,7 +901,8 @@ export function mountA4Editor(container, result, opts) {
       const isPhoto = dragState.orig.type === 'image';
       const keep = isPhoto ? !e.shiftKey : !!e.shiftKey;
       const next = resizeFrame(dragState.orig, dragState.handle, dxA4, dyA4, keep);
-      fr.x = next.x; fr.y = next.y; fr.w = next.w; fr.h = next.h;
+      const safe = fr.type === 'title' || fr.type === 'meta' ? next : clampOutOfForbidden(next, forbiddenRects(page, dragState.pageIndex, fr.id), dragState.pageIndex);
+      fr.x = safe.x; fr.y = safe.y; fr.w = safe.w; fr.h = safe.h;
       applyFrameStyle(dragState.pageIndex, fr);
       scheduleOverlayUpdate();
     }
@@ -884,10 +944,16 @@ export function mountA4Editor(container, result, opts) {
       if (fr.locked) return;
       e.preventDefault();
       const step = e.shiftKey ? 10 : 1;
-      if (e.key === 'ArrowLeft') fr.x = Math.round(clamp(fr.x - step, 0, A4_WIDTH - fr.w));
-      if (e.key === 'ArrowRight') fr.x = Math.round(clamp(fr.x + step, 0, A4_WIDTH - fr.w));
-      if (e.key === 'ArrowUp') fr.y = Math.round(clamp(fr.y - step, 0, A4_HEIGHT - fr.h));
-      if (e.key === 'ArrowDown') fr.y = Math.round(clamp(fr.y + step, 0, A4_HEIGHT - fr.h));
+      if (e.key === 'ArrowLeft') fr.x -= step;
+      if (e.key === 'ArrowRight') fr.x += step;
+      if (e.key === 'ArrowUp') fr.y -= step;
+      if (e.key === 'ArrowDown') fr.y += step;
+      const page = pages[selected.pageIndex];
+      const safe = (fr.type === 'title' || fr.type === 'meta')
+        ? { x: clamp(fr.x, 0, A4_WIDTH - fr.w), y: clamp(fr.y, 0, A4_HEIGHT - fr.h) }
+        : clampOutOfForbidden(fr, forbiddenRects(page, selected.pageIndex, fr.id), selected.pageIndex);
+      fr.x = Math.round(safe.x);
+      fr.y = Math.round(safe.y);
       scheduleOverlayUpdate();
       clearTimeout(onKeyDown._t);
       onKeyDown._t = setTimeout(() => {
@@ -913,7 +979,13 @@ export function mountA4Editor(container, result, opts) {
   window.addEventListener('pointercancel', onPointerUp, moveOpts);
   window.addEventListener('mousemove', onPointerMove, moveOpts);
   window.addEventListener('mouseup', onPointerUp, moveOpts);
-  container.addEventListener('keydown', onKeyDown);
+  function onGlobalKeyDown(e) {
+    const tag = ((e.target && e.target.tagName) || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable)) return;
+    if (editingTextarea) return;
+    onKeyDown(e);
+  }
+  document.addEventListener('keydown', onGlobalKeyDown);
   container.addEventListener('dblclick', onDblClick);
   let resizeObserver = null;
   if (typeof ResizeObserver !== 'undefined') {
@@ -932,7 +1004,7 @@ export function mountA4Editor(container, result, opts) {
     window.removeEventListener('pointercancel', onPointerUp, { capture: true });
     window.removeEventListener('mousemove', onPointerMove, { capture: true });
     window.removeEventListener('mouseup', onPointerUp, { capture: true });
-    container.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('keydown', onGlobalKeyDown);
     container.removeEventListener('dblclick', onDblClick);
     if (resizeObserver) resizeObserver.disconnect();
     else window.removeEventListener('resize', onResize);
@@ -959,5 +1031,5 @@ export function mountA4Editor(container, result, opts) {
     onChange(result);
     return true;
   }
-  return { destroy, getLayout, serialize, applyLayout, undo, redo, isDirty };
+  return { destroy, getLayout, serialize, applyLayout, undo, redo, isDirty, canUndo: () => history.canUndo(), canRedo: () => history.canRedo() };
 }

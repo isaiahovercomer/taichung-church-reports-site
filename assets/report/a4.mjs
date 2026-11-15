@@ -1,10 +1,10 @@
-// A4 圖檔產生（瀏覽器）：用 a4-layout.mjs 排版、畫到 canvas；頁數不夠時先縮照片、再節錄文字，最後才縮字（內文不低於 10.5pt）。
-// 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
+// A4 圖檔產生（瀏覽器）：用 a4-layout.mjs 排版、畫到 canvas；頁數不夠時先減照片（至少留 4 張）、再把字級降到 90%，仍放不下才節錄文字。
+// 字級最低 90%，不再縮到 81%。真的塞不下就再減照片，並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4, MIN_BODY_PX, BODY_PX, DEFAULT_FOCUS_X, DEFAULT_FOCUS_Y, pageFillRatio } from './a4-layout.mjs?v=f6c935fec3';
-import { LOGO_DATA_URL } from '../brand.mjs?v=f6c935fec3';
-import { getTheme, drawPattern } from './themes.mjs?v=f6c935fec3';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4, MIN_BODY_PX, BODY_PX, DEFAULT_FOCUS_X, DEFAULT_FOCUS_Y, pageFillRatio } from './a4-layout.mjs?v=7ad688132a';
+import { LOGO_DATA_URL } from '../brand.mjs?v=7ad688132a';
+import { getTheme, drawPattern } from './themes.mjs?v=7ad688132a';
 
 
 function themePalette(theme) {
@@ -28,11 +28,13 @@ function loadLogo() {
 let logoImg = null;
 
 export const FULL_TEXT_NOTE = '（篇幅所限，以上為節錄，全文見網頁版）';
-const SCALES = [1, 0.93, 0.86, 0.8, 0.74, 0.68, 0.62];
-/** 內文最小 10.5pt；先縮照片、再節錄文字，最後才縮字。 */
+/** 版面字級最低 90%，避免年長聖徒看不清。 */
+export const MIN_FONT_SCALE = 0.9;
+const SCALES = [1, 0.95, 0.9];
+/** 先減照片、再略縮字到 90%，最後才節錄文字。 */
 export function fontScaleSteps() {
-  const minS = MIN_BODY_PX / BODY_PX;
-  return [1, 0.93, 0.86, Math.max(minS, 0.81)].filter((v, i, a) => a.findIndex((x) => Math.abs(x - v) < 0.005) === i && v + 1e-6 >= minS);
+  const minS = MIN_FONT_SCALE;
+  return [1, 0.95, minS].filter((v, i, a) => a.findIndex((x) => Math.abs(x - v) < 0.005) === i && v + 1e-6 >= minS);
 }
 
 
@@ -59,7 +61,7 @@ function drawImage(ctx, img, op) {
   } else {
     const iw = img.naturalWidth || img.width;
     const ih = img.naturalHeight || img.height;
-    const r = op.fit === 'cover' ? Math.max(op.w / iw, op.h / ih) : Math.min(op.w / iw, op.h / ih);
+    const r = op.fit === 'contain' ? Math.min(op.w / iw, op.h / ih) : Math.max(op.w / iw, op.h / ih);
     const dw = iw * r;
     const dh = ih * r;
     const fx = op.focusX != null ? op.focusX : 0.5;
@@ -220,7 +222,7 @@ function photoIdsOf(comp) {
 }
 
 /**
- * 把一份內容塞進 target 頁：先縮照片（仍保留至少 4 張）、再節錄文字、最後才縮字（不低於 10.5pt）；最後手段只留前 target 頁並註明。
+ * 把一份內容塞進 target 頁：先減照片（仍保留至少 4 張）、再把字級降到 90%，仍放不下才節錄文字；最後手段只留前 target 頁並註明。
  * 回傳 { pages, comp, scale, truncated, words, lastResort }
  */
 async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize, startPage = 0, theme = null }) {
@@ -236,27 +238,28 @@ async function fitPages({ compose, words, maxPhotos, target, header, layout, met
   };
   // 1. 先用原字級、全部照片與文字
   if (await tryOnce(1, words, maxPhotos, null)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words, lastResort: false };
-  // 2. 照片很多時先減張數，但至少保留 4 張，避免把一般報導的兩張主圖也砍掉
+  // 2. 照片很多時先減張數，但至少保留 4 張
   truncated = true;
   let photos = maxPhotos;
   while (photos > 4) {
     photos = Math.max(4, Math.floor(photos * 0.7));
     if (await tryOnce(1, words, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words, lastResort: false };
   }
-  // 3. 再節錄文字
+  // 3. 再把字級降到 90%（不再更小），盡量保留全文
+  for (const scale of fontScaleSteps().filter((s) => s < 0.999)) {
+    if (await tryOnce(scale, words, photos, null)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated: false, words, lastResort: false };
+  }
+  // 4. 仍放不下才節錄文字（字級維持 90%）
+  const minScale = fontScaleSteps().at(-1);
   let w = words;
   while (w > 150) {
     w = Math.max(150, Math.floor(w * 0.75));
-    if (await tryOnce(1, w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
-  }
-  // 4. 最後才縮字，且不低於 10.5pt
-  for (const scale of fontScaleSteps().filter((s) => s < 0.999)) {
-    if (await tryOnce(scale, w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
+    if (await tryOnce(minScale, w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
   }
   // 5. 仍塞不下才再減到 4 張以下
   while (photos > 1) {
     photos = Math.max(1, photos - 1);
-    if (await tryOnce(fontScaleSteps().at(-1), w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
+    if (await tryOnce(minScale, w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
   }
   return { pages: last.res.pages.slice(0, target), comp: last.comp, scale: last.scale, truncated: true, words: w, lastResort: true };
 }

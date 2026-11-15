@@ -2379,6 +2379,9 @@ button[aria-busy='true'] {
 
 .a4-pages-editor-host { width: 100%; }
 .a4-editor { outline: none; }
+.a4-editor-toolbar { display: flex; gap: 8px; justify-content: flex-start; width: 100%; margin: 0 0 12px; }
+.a4-editor-toolbar .btn { min-width: 72px; }
+.a4-editor-toolbar .btn:disabled { opacity: 0.45; cursor: default; }
 .a4-editor-pages { display: flex; flex-direction: column; gap: 28px; align-items: stretch; width: 100%; }
 .a4-editor-figure { margin: 0; width: 100%; }
 .a4-editor-page { position: relative; width: 100%; margin: 0 auto; background: #fff; box-shadow: 0 2px 16px rgba(31, 45, 61, 0.14); border: 1px solid #E4E3DE; overflow: hidden; touch-action: none; }
