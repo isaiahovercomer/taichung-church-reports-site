@@ -2,8 +2,15 @@
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=48b1878d06';
-import { LOGO_DATA_URL } from '../brand.mjs?v=48b1878d06';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=6afe119b22';
+import { LOGO_DATA_URL } from '../brand.mjs?v=6afe119b22';
+import { getTheme, drawPattern } from './themes.mjs?v=6afe119b22';
+
+
+function themePalette(theme) {
+  const t = theme && theme.colors ? theme : getTheme(theme && theme.id ? theme.id : theme);
+  return { theme: t, c: t && t.colors ? { ...COLORS, ...t.colors } : COLORS };
+}
 
 let logoPromise = null;
 /** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
@@ -56,67 +63,72 @@ function drawImage(ctx, img, op) {
   ctx.restore();
 }
 
-function drawChrome(ctx, index, total, title) {
+function drawChrome(ctx, index, total, title, theme) {
+  const { theme: t, c } = themePalette(theme);
   const W = A4.width;
   const H = A4.height;
-  ctx.fillStyle = COLORS.bg;
+  const headerText = c.headerText || '#fff';
+  const titleFamily = t && t.titleFont ? `"${t.titleFont}",${FONT_FAMILY}` : FONT_FAMILY;
+  ctx.fillStyle = c.bg;
   ctx.fillRect(0, 0, W, H);
+  if (t) drawPattern(ctx, t, { width: W, height: H, index });
   ctx.textBaseline = 'alphabetic';
   if (index === 0) {
-    ctx.fillStyle = COLORS.navy;
+    ctx.fillStyle = c.navy;
     ctx.fillRect(0, 0, W, 132);
-    ctx.fillStyle = COLORS.goldLight;
+    ctx.fillStyle = c.goldLight;
     ctx.fillRect(0, 132, W, 5);
     if (logoImg) {
       ctx.drawImage(logoImg, 100, 22, 88, 88);
     } else {
       ctx.beginPath();
       ctx.arc(140, 66, 36, 0, Math.PI * 2);
-      ctx.strokeStyle = COLORS.goldLight;
+      ctx.strokeStyle = c.goldLight;
       ctx.lineWidth = 3;
       ctx.stroke();
     }
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = headerText;
     ctx.font = font(36, 900);
     ctx.textAlign = 'left';
     ctx.fillText('台中市召會', 196, 64);
-    ctx.fillStyle = COLORS.goldLight;
+    ctx.fillStyle = c.goldLight;
     ctx.font = font(18, 700);
     ctx.fillText('THE CHURCH IN TAICHUNG', 198, 96);
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = headerText;
     ctx.font = font(24, 700);
     ctx.fillText('行動報導', W - 100, 78);
   } else {
-    ctx.fillStyle = COLORS.goldLight;
+    ctx.fillStyle = c.goldLight;
     ctx.fillRect(0, 0, W, 6);
     ctx.textAlign = 'left';
-    ctx.fillStyle = COLORS.navy;
+    ctx.fillStyle = c.navy;
     ctx.font = font(20, 700);
     ctx.fillText('台中市召會　行動報導', 100, 70);
     ctx.textAlign = 'right';
-    ctx.fillStyle = COLORS.gray;
+    ctx.fillStyle = c.gray;
     ctx.font = font(20);
     const t = title.length > 30 ? `${title.slice(0, 30)}…` : title;
     ctx.fillText(t, W - 100, 70);
-    ctx.fillStyle = COLORS.line;
+    ctx.fillStyle = c.line;
     ctx.fillRect(100, 92, W - 200, 2);
   }
-  ctx.fillStyle = COLORS.line;
+  ctx.fillStyle = c.line;
   ctx.fillRect(100, H - 96, W - 200, 2);
   ctx.textAlign = 'center';
-  ctx.fillStyle = COLORS.gray;
+  ctx.fillStyle = c.gray;
   ctx.font = font(20);
   ctx.fillText(`— ${index + 1} / ${total} —`, W / 2, H - 56);
 }
 
-function drawFooter(ctx, index, total, light) {
+function drawFooter(ctx, index, total, light, theme) {
+  const { c } = themePalette(theme);
   const W = A4.width;
   const H = A4.height;
-  ctx.fillStyle = light ? 'rgba(255,255,255,0.45)' : COLORS.line;
+  ctx.fillStyle = light ? 'rgba(255,255,255,0.45)' : c.line;
   ctx.fillRect(100, H - 96, W - 200, 2);
   ctx.textAlign = 'center';
-  ctx.fillStyle = light ? '#ffffff' : COLORS.gray;
+  ctx.fillStyle = light ? '#ffffff' : c.gray;
   ctx.font = font(20);
   ctx.fillText(`— ${index + 1} / ${total} —`, W / 2, H - 56);
 }
@@ -171,25 +183,25 @@ function attachFocus(pages) {
   return pages;
 }
 
-function paintPage(canvas, page, index, total, title, images) {
+function paintPage(canvas, page, index, total, title, images, theme) {
   canvas.width = A4.width;
   canvas.height = A4.height;
   const ctx = canvas.getContext('2d');
-  drawChrome(ctx, index, total, title);
+  drawChrome(ctx, index, total, title, theme);
   drawA4Ops(ctx, page.ops, images);
   const fullbleed = (page.ops || []).some((o) => o.op === 'image' && o.x <= 0 && o.y <= 0 && o.w >= A4.width && o.h >= A4.height - 1);
-  drawFooter(ctx, index, total, fullbleed);
+  drawFooter(ctx, index, total, fullbleed, theme);
   return canvas;
 }
 
-function drawPage(page, index, total, title, images) {
-  return paintPage(document.createElement('canvas'), page, index, total, title, images);
+function drawPage(page, index, total, title, images, theme) {
+  return paintPage(document.createElement('canvas'), page, index, total, title, images, theme);
 }
 
 /** 把一頁重畫到既有 canvas（給編輯器）。沿用正式頁首頁尾，不會改成簡化版頁眉。 */
-export function drawA4Page(canvas, page, pageIndex, total, images, title) {
+export function drawA4Page(canvas, page, pageIndex, total, images, title, theme) {
   if (!canvas) return canvas;
-  return paintPage(canvas, page, pageIndex, total, title || '', images);
+  return paintPage(canvas, page, pageIndex, total, title || '', images, theme);
 }
 
 function photoIdsOf(comp) {
@@ -205,7 +217,7 @@ function photoIdsOf(comp) {
  * 把一份內容塞進 target 頁：先試各種字級縮放，塞不下就減字數、再減照片；最後手段只留前 target 頁並註明。
  * 回傳 { pages, comp, scale, truncated, words, lastResort }
  */
-async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize, startPage = 0 }) {
+async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize, startPage = 0, theme = null }) {
   let truncated = false;
   let last = null;
   for (let attempt = 0; attempt < 14; attempt++) {
@@ -214,7 +226,7 @@ async function fitPages({ compose, words, maxPhotos, target, header, layout, met
     const comp = { ...raw, blocks: raw.blocks.filter((b) => b.type !== 'video') };
     await ensureImages(comp);
     for (const scale of SCALES) {
-      const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header, startPage });
+      const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header, startPage, theme });
       last = { res, comp, scale };
       if (res.pages.length <= target) return { pages: res.pages, comp, scale, truncated, words, lastResort: false };
     }
@@ -261,16 +273,17 @@ async function imageHelpers(loadImage) {
  */
 export async function renderA4(opts) {
   const { settings } = opts;
+  const theme = opts.theme || settings.theme || null;
   const { images, ensureImages, imageSize } = await imageHelpers(opts.loadImage);
-  const r = await fitPages({ compose: opts.compose, words: settings.words, maxPhotos: settings.maxPhotos, target: settings.pages, header: true, layout: settings.layout, metaLine: opts.metaLine, ensureImages, imageSize });
+  const r = await fitPages({ compose: opts.compose, words: settings.words, maxPhotos: settings.maxPhotos, target: settings.pages, header: true, layout: settings.layout, metaLine: opts.metaLine, ensureImages, imageSize, theme });
   attachFocus(r.pages);
   const canvases = r.pages.map((p, i) => {
-    const c = drawPage(p, i, r.pages.length, r.comp.data.title, images);
+    const c = drawPage(p, i, r.pages.length, r.comp.data.title, images, theme);
     p.canvas = c;
     return c;
   });
   if (r.lastResort) stampNote(canvases[canvases.length - 1]);
-  return { canvases, pages: canvases.length, layoutPages: r.pages, images, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp };
+  return { canvases, pages: canvases.length, layoutPages: r.pages, images, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp, theme };
 }
 
 /**
@@ -303,6 +316,7 @@ export async function renderA4Plan(opts) {
         metaLine: opts.metaLine,
         ensureImages,
         imageSize,
+        theme: opts.theme || settings.theme || null,
       }),
     );
   }
@@ -314,7 +328,7 @@ export async function renderA4Plan(opts) {
   });
   attachFocus(layoutPages);
   const canvases = layoutPages.map((page, i) => {
-    const c = drawPage(page, i, n, title, images);
+    const c = drawPage(page, i, n, title, images, opts.theme || settings.theme || null);
     if (results[i].lastResort) stampNote(c);
     page.canvas = c;
     return c;
@@ -327,6 +341,7 @@ export async function renderA4Plan(opts) {
     truncated: results.some((r) => r.truncated),
     scale: Math.min(...results.map((r) => r.scale)),
     comps: results.map((r) => r.comp),
+    theme: opts.theme || settings.theme || null,
   };
 }
 

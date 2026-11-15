@@ -9,6 +9,14 @@ export const A4 = { width: 1240, height: 1754 };
 export const FONT_FAMILY = '"Noto Sans CJK TC","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 export const COLORS = { navy: '#16324F', gold: '#836427', goldLight: '#C9A865', text: '#1F2D3D', gray: '#5A6A7A', line: '#E4E3DE', bg: '#FFFFFF', paper: '#F5F5F2' };
 
+/** 排版進行中的色票；runWithTheme 可暫時換成設計範本，結束後還原。 */
+let PAL = COLORS;
+export function runWithTheme(theme, fn) {
+  const prev = PAL;
+  PAL = theme && theme.colors ? { ...COLORS, ...theme.colors } : COLORS;
+  try { return fn(); } finally { PAL = prev; }
+}
+
 
 const MARGIN = 100;
 const TOP_FIRST = 196;
@@ -207,7 +215,7 @@ function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, i
   if (data.kicker) {
     const f = font(24 * s, 700);
     page.frames.push({ id: 'p' + pageIndex + '-kicker-' + (++n), type: 'meta', x: MARGIN, y: y, w: CW, h: 24 * s + 18 * s, locked: false });
-    page.ops.push({ op: 'text', x: MARGIN, y: y + 24 * s, text: data.kicker, font: f, color: COLORS.gold });
+    page.ops.push({ op: 'text', x: MARGIN, y: y + 24 * s, text: data.kicker, font: f, color: PAL.gold });
     y += 24 * s + 18 * s;
   }
   const titleSize = 54 * s * (spec.titleScale || 1);
@@ -216,17 +224,17 @@ function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, i
   const tlh = titleSize * 1.35;
   if (tlines.length) {
     page.frames.push({ id: hid('title'), type: 'title', x: MARGIN, y: y, w: CW, h: tlines.length * tlh, locked: false });
-    for (const ln of tlines) { page.ops.push({ op: 'text', x: MARGIN, y: y + titleSize, text: ln, font: tf, color: COLORS.navy }); y += tlh; }
+    for (const ln of tlines) { page.ops.push({ op: 'text', x: MARGIN, y: y + titleSize, text: ln, font: tf, color: PAL.navy }); y += tlh; }
   }
   y += 10 * s;
   const mf = font(23 * s);
   const mlines = wrapText(metaLine || '', mf, CW, measure);
   if (mlines.length) {
     page.frames.push({ id: hid('meta'), type: 'meta', x: MARGIN, y: y, w: CW, h: mlines.length * 23 * s * 1.6, locked: false });
-    for (const ln of mlines) { page.ops.push({ op: 'text', x: MARGIN, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray }); y += 23 * s * 1.6; }
+    for (const ln of mlines) { page.ops.push({ op: 'text', x: MARGIN, y: y + 23 * s, text: ln, font: mf, color: PAL.gray }); y += 23 * s * 1.6; }
   }
   y += 14 * s;
-  page.ops.push({ op: 'line', x1: MARGIN, y1: y, x2: MARGIN + CW, y2: y, color: COLORS.line, width: 2 });
+  page.ops.push({ op: 'line', x1: MARGIN, y1: y, x2: MARGIN + CW, y2: y, color: PAL.line, width: 2 });
   y += 30 * s;
   if (cover) {
     const sz = sizeOf(imageSize, cover.photoId);
@@ -239,7 +247,7 @@ function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, i
       y += captionGap(s);
       const ch = captionBlockHeight(clines, s);
       page.frames.push({ id: hid('caption'), type: 'caption', x: MARGIN, y: y, w: CW, h: ch, locked: false, photoId: cover.photoId, align: 'center' });
-      for (const ln of clines) { page.ops.push({ op: 'text', x: MARGIN + CW / 2, y: y + captionSize(s), text: ln, font: font(captionSize(s)), color: COLORS.gray, align: 'center' }); y += captionLineHeight(s); }
+      for (const ln of clines) { page.ops.push({ op: 'text', x: MARGIN + CW / 2, y: y + captionSize(s), text: ln, font: font(captionSize(s)), color: PAL.gray, align: 'center' }); y += captionLineHeight(s); }
     }
     y += 16 * s;
   }
@@ -305,7 +313,7 @@ function flowPara(st, b, idx) {
   const size = quoteLead ? st.bodySize * 1.22 : st.bodySize;
   const lh = quoteLead ? size * 1.7 : st.bodyLH;
   const fnt = quoteLead ? font(size, 500) : st.bf;
-  const color = quoteLead ? COLORS.navy : COLORS.text;
+  const color = quoteLead ? PAL.navy : PAL.text;
   const tokens = String(b.text ?? '').match(TOKEN_RE) || [];
   let ti = 0;
   let line = '';
@@ -400,7 +408,7 @@ function flowSectionHeading(st, b, idx, kind) {
   st.y += top;
   if (isSection) {
     st.page.frames.push({ id: nextId(st, 'heading'), type: 'heading', x: col.x, y: st.y, w: colW, h: boxH, blockIndex: idx });
-    st.page.ops.push({ op: 'rect', x: col.x, y: st.y, w: colW, h: boxH, fill: COLORS.navy });
+    st.page.ops.push({ op: 'rect', x: col.x, y: st.y, w: colW, h: boxH, fill: PAL.navy });
     let ty = st.y + 11 * s;
     for (const ln of lines) {
       st.page.ops.push({ op: 'text', x: col.x + 20 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: fnt, color: '#ffffff' });
@@ -409,13 +417,13 @@ function flowSectionHeading(st, b, idx, kind) {
     st.y += boxH + 22 * s;
   } else {
     st.page.frames.push({ id: nextId(st, 'heading'), type: 'heading', x: col.x, y: st.y, w: colW, h: boxH, blockIndex: idx });
-    st.page.ops.push({ op: 'rect', x: col.x, y: st.y + lh * 0.18, w: 7 * s, h: lines.length * lh - lh * 0.36, fill: COLORS.goldLight });
+    st.page.ops.push({ op: 'rect', x: col.x, y: st.y + lh * 0.18, w: 7 * s, h: lines.length * lh - lh * 0.36, fill: PAL.goldLight });
     if (st.spec.timeline && st.railX != null) {
-      st.page.ops.push({ op: 'rect', x: st.railX - 4, y: st.y + lh * 0.4, w: 12, h: 12, fill: COLORS.gold });
+      st.page.ops.push({ op: 'rect', x: st.railX - 4, y: st.y + lh * 0.4, w: 12, h: 12, fill: PAL.gold });
     }
     let ty = st.y;
     for (const ln of lines) {
-      st.page.ops.push({ op: 'text', x: col.x + 22 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: fnt, color: COLORS.navy });
+      st.page.ops.push({ op: 'text', x: col.x + 22 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: fnt, color: PAL.navy });
       ty += lh;
     }
     st.y += boxH + 8 * s;
@@ -441,16 +449,16 @@ function flowByline(st, b, idx) {
   }
   const frameY = st.y;
   if (quoteMode) {
-    st.page.ops.push({ op: 'line', x1: col.x + col.w * 0.2, y1: st.y, x2: col.x + col.w * 0.8, y2: st.y, color: COLORS.goldLight, width: 3 });
+    st.page.ops.push({ op: 'line', x1: col.x + col.w * 0.2, y1: st.y, x2: col.x + col.w * 0.8, y2: st.y, color: PAL.goldLight, width: 3 });
     st.y += 18 * s;
   }
   st.page.frames.push({ id: nextId(st, 'text'), type: 'text', x: col.x, y: frameY, w: col.w, h: quoteMode ? total + 36 * s : total, blockIndex: idx });
   for (const ln of lines) {
-    st.page.ops.push({ op: 'text', x: col.x + col.w, y: st.y + (lh + size * 0.72) / 2, text: ln, font: fnt, color: COLORS.gold, align: 'right' });
+    st.page.ops.push({ op: 'text', x: col.x + col.w, y: st.y + (lh + size * 0.72) / 2, text: ln, font: fnt, color: PAL.gold, align: 'right' });
     st.y += lh;
   }
   if (quoteMode) {
-    st.page.ops.push({ op: 'line', x1: col.x + col.w * 0.2, y1: st.y + 6 * s, x2: col.x + col.w * 0.8, y2: st.y + 6 * s, color: COLORS.goldLight, width: 3 });
+    st.page.ops.push({ op: 'line', x1: col.x + col.w * 0.2, y1: st.y + 6 * s, x2: col.x + col.w * 0.8, y2: st.y + 6 * s, color: PAL.goldLight, width: 3 });
     st.y += 18 * s;
   }
   st.y += 10 * s;
@@ -473,11 +481,11 @@ function flowNote(st, b, idx) {
   }
   const frameY = st.y;
   st.y += 14 * s;
-  st.page.ops.push({ op: 'line', x1: col.x, y1: st.y, x2: col.x + col.w, y2: st.y, color: COLORS.line, width: 2 });
+  st.page.ops.push({ op: 'line', x1: col.x, y1: st.y, x2: col.x + col.w, y2: st.y, color: PAL.line, width: 2 });
   st.y += 10 * s;
   st.page.frames.push({ id: nextId(st, 'note'), type: 'note', x: col.x, y: frameY, w: col.w, h: total, blockIndex: idx });
   for (const ln of lines) {
-    st.page.ops.push({ op: 'text', x: col.x, y: st.y + (lh + 24 * s * 0.72) / 2, text: ln, font: fnt, color: COLORS.gold });
+    st.page.ops.push({ op: 'text', x: col.x, y: st.y + (lh + 24 * s * 0.72) / 2, text: ln, font: fnt, color: PAL.gold });
     st.y += lh;
   }
   return true;
@@ -559,7 +567,7 @@ function placeFigure(st, b, idx) {
   }
   const effTotal = h + capSpace + (isCard ? 48 * s : 0);
   if (isCard) {
-    st.page.ops.push({ op: 'rect', x: col.x, y: iy, w: colW, h: effTotal, fill: COLORS.paper });
+    st.page.ops.push({ op: 'rect', x: col.x, y: iy, w: colW, h: effTotal, fill: PAL.paper });
   }
   const imgFrame = { id: nextId(st, 'image'), type: 'image', x: ix, y: iy, w: w, h: h, locked: false, photoId: b.photoId, fit: (isCard || isBanner) ? 'cover' : 'contain', blockIndex: idx };
   st.page.frames.push(imgFrame);
@@ -573,7 +581,7 @@ function placeFigure(st, b, idx) {
       const cf = font(captionSize(s));
       for (let i = 0; i < capLines.length; i++) {
         const tx = capAlign === 'left' ? ix : ix + w / 2;
-        st.page.ops.push({ op: 'text', x: tx, y: cy + i * lh + captionSize(s), text: capLines[i], font: cf, color: COLORS.gray, align: capAlign });
+        st.page.ops.push({ op: 'text', x: tx, y: cy + i * lh + captionSize(s), text: capLines[i], font: cf, color: PAL.gray, align: capAlign });
       }
     }
   }
@@ -633,7 +641,7 @@ function placeFigurePair(st, b1, b2, idx1, idx2) {
     st.page.ops.push({ op: 'image', photoId: bb.photoId, x: xx, y: y0, w: w, h: h, fit: 'cover', radius: 6 });
     if (caps.length && cy + captionBlockHeight(caps, s) <= BOTTOM + 0.5) {
       st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: xx, y: cy, w: w, h: captionBlockHeight(caps, s), locked: false, photoId: bb.photoId, blockIndex: bi, align: 'left' });
-      for (let i = 0; i < caps.length; i++) st.page.ops.push({ op: 'text', x: xx, y: cy + i * lh + captionSize(s), text: caps[i], font: cf, color: COLORS.gray });
+      for (let i = 0; i < caps.length; i++) st.page.ops.push({ op: 'text', x: xx, y: cy + i * lh + captionSize(s), text: caps[i], font: cf, color: PAL.gray });
     }
   }
   st.obstacles.push({ x: col.x, y: y0, w: col.w, h: rowH });
@@ -707,7 +715,7 @@ function drawSpreadHeader(page, data, metaLine, geom, s, measure, pageIndex, spe
   if (data.kicker) {
     const f = font(24 * s, 700);
     page.frames.push({ id: hid('kicker'), type: 'meta', x, y, w: CW, h: 24 * s + 18 * s, locked: false });
-    page.ops.push({ op: 'text', x, y: y + 24 * s, text: data.kicker, font: f, color: COLORS.gold });
+    page.ops.push({ op: 'text', x, y: y + 24 * s, text: data.kicker, font: f, color: PAL.gold });
     y += 24 * s + 18 * s;
   }
   const titleSize = 48 * s * (spec.titleScale || 1);
@@ -716,17 +724,17 @@ function drawSpreadHeader(page, data, metaLine, geom, s, measure, pageIndex, spe
   const tlh = titleSize * 1.35;
   if (tlines.length) {
     page.frames.push({ id: hid('title'), type: 'title', x, y, w: CW, h: tlines.length * tlh, locked: false });
-    for (const ln of tlines) { page.ops.push({ op: 'text', x, y: y + titleSize, text: ln, font: tf, color: COLORS.navy }); y += tlh; }
+    for (const ln of tlines) { page.ops.push({ op: 'text', x, y: y + titleSize, text: ln, font: tf, color: PAL.navy }); y += tlh; }
   }
   y += 10 * s;
   const mf = font(23 * s);
   const mlines = wrapText(metaLine || '', mf, CW, measure);
   if (mlines.length) {
     page.frames.push({ id: hid('meta'), type: 'meta', x, y, w: CW, h: mlines.length * 23 * s * 1.6, locked: false });
-    for (const ln of mlines) { page.ops.push({ op: 'text', x, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray }); y += 23 * s * 1.6; }
+    for (const ln of mlines) { page.ops.push({ op: 'text', x, y: y + 23 * s, text: ln, font: mf, color: PAL.gray }); y += 23 * s * 1.6; }
   }
   y += 14 * s;
-  page.ops.push({ op: 'line', x1: x, y1: y, x2: x + CW, y2: y, color: COLORS.line, width: 2 });
+  page.ops.push({ op: 'line', x1: x, y1: y, x2: x + CW, y2: y, color: PAL.line, width: 2 });
   y += 24 * s;
   return y;
 }
@@ -750,7 +758,7 @@ function placeSpreadPhoto(page, photo, geom, s, measure, pageIndex) {
       page.frames.push({ id: hid('caption'), type: 'caption', x: xx, y: cy, w, h: capH, locked: false, photoId: photo.photoId, blockIndex: photo.blockIndex, align: 'left' });
       const lh = captionLineHeight(s);
       const cf = font(captionSize(s));
-      capLines.forEach((ln, i) => { page.ops.push({ op: 'text', x: xx, y: cy + i * lh + captionSize(s), text: ln, font: cf, color: COLORS.gray, align: 'left' }); });
+      capLines.forEach((ln, i) => { page.ops.push({ op: 'text', x: xx, y: cy + i * lh + captionSize(s), text: ln, font: cf, color: PAL.gray, align: 'left' }); });
     }
   }
 }
@@ -784,7 +792,7 @@ function placeSpreadPhotoTail(pages, photos, s, measure, startPage) {
           page.ops.push({ op: 'image', photoId: photo.photoId, x: xx, y, w, h, fit: 'cover', radius: 8 });
           if (caps.length && cy + captionBlockHeight(caps, s) <= BOTTOM + 0.5) {
             page.frames.push({ id: 'p' + pageIndex + '-caption-' + placed, type: 'caption', x: xx, y: cy, w, h: captionBlockHeight(caps, s), locked: false, photoId: photo.photoId, blockIndex: photo.blockIndex, align: 'left' });
-            caps.forEach((ln, n) => { page.ops.push({ op: 'text', x: xx, y: cy + n * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: COLORS.gray, align: 'left' }); });
+            caps.forEach((ln, n) => { page.ops.push({ op: 'text', x: xx, y: cy + n * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: PAL.gray, align: 'left' }); });
           }
         }
         i += 2;
@@ -795,7 +803,7 @@ function placeSpreadPhotoTail(pages, photos, s, measure, startPage) {
         page.ops.push({ op: 'image', photoId: a.photoId, x: MARGIN, y, w: ww, h, fit: 'cover', radius: 8 });
         if (capA.length && cy + captionBlockHeight(capA, s) <= BOTTOM + 0.5) {
           page.frames.push({ id: 'p' + pageIndex + '-caption-' + placed, type: 'caption', x: MARGIN, y: cy, w: ww, h: captionBlockHeight(capA, s), locked: false, photoId: a.photoId, blockIndex: a.blockIndex, align: 'left' });
-          capA.forEach((ln, n) => { page.ops.push({ op: 'text', x: MARGIN, y: cy + n * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: COLORS.gray, align: 'left' }); });
+          capA.forEach((ln, n) => { page.ops.push({ op: 'text', x: MARGIN, y: cy + n * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: PAL.gray, align: 'left' }); });
         }
         i += 1;
       }
@@ -857,7 +865,10 @@ function layoutSpread({ data, metaLine, cover, blocks, scale, measure, imageSize
   return { pages };
 }
 
-export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true, startPage = 0 }) {
+export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true, startPage = 0, theme = null }) {
+  return runWithTheme(theme, () => layoutA4Inner({ data, metaLine, cover, blocks, layout, scale, measure, imageSize, header, startPage }));
+}
+function layoutA4Inner({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true, startPage = 0 }) {
   const s = scale || 1;
   const spec = specFor(layout);
   const m = measure || fallbackMeasure;
@@ -885,25 +896,25 @@ export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', sc
       const sbH = Math.max(0, BOTTOM - sbY);
       if (sbH > 40) {
         page.frames.push({ id: 'p' + pageIndex + '-note-sidebar', type: 'note', x: MARGIN, y: sbY, w: 240, h: sbH, locked: true });
-        page.ops.push({ op: 'rect', x: MARGIN, y: sbY, w: 240, h: sbH, fill: COLORS.paper });
-        page.ops.push({ op: 'line', x1: MARGIN + 240, y1: sbY, x2: MARGIN + 240, y2: BOTTOM, color: COLORS.line, width: 2 });
+        page.ops.push({ op: 'rect', x: MARGIN, y: sbY, w: 240, h: sbH, fill: PAL.paper });
+        page.ops.push({ op: 'line', x1: MARGIN + 240, y1: sbY, x2: MARGIN + 240, y2: BOTTOM, color: PAL.line, width: 2 });
         const sections = list.filter((b) => b.type === 'section').map((b) => b.text);
         const sf = font(22 * s, 700);
         let sy = sbY + 24 * s;
-        page.ops.push({ op: 'text', x: MARGIN + 16, y: sy + 22 * s, text: '本期要目', font: sf, color: COLORS.navy });
+        page.ops.push({ op: 'text', x: MARGIN + 16, y: sy + 22 * s, text: '本期要目', font: sf, color: PAL.navy });
         sy += 22 * s * 1.6 + 10 * s;
         const tf2 = font(21 * s);
         for (const t of sections) {
           for (const ln of wrapText(t, tf2, 208, m)) {
             if (sy + 21 * s * 1.5 > BOTTOM) break;
-            page.ops.push({ op: 'text', x: MARGIN + 16, y: sy + 21 * s, text: ln, font: tf2, color: COLORS.gray });
+            page.ops.push({ op: 'text', x: MARGIN + 16, y: sy + 21 * s, text: ln, font: tf2, color: PAL.gray });
             sy += 21 * s * 1.5;
           }
         }
       }
     }
     if (spec.timeline && geom.railX != null) {
-      page.ops.push({ op: 'line', x1: geom.railX, y1: yAfter, x2: geom.railX, y2: BOTTOM, color: COLORS.line, width: 3 });
+      page.ops.push({ op: 'line', x1: geom.railX, y1: yAfter, x2: geom.railX, y2: BOTTOM, color: PAL.line, width: 3 });
     }
     if (yAfter > BOTTOM) {
       pageIndex++;
@@ -933,6 +944,11 @@ export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', sc
  */
 export function reflowPage(page, frames, ctx) {
   const c = ctx || {};
+  if (c.theme) return runWithTheme(c.theme, () => reflowPageInner(page, frames, ctx));
+  return reflowPageInner(page, frames, ctx);
+}
+function reflowPageInner(page, frames, ctx) {
+  const c = ctx || {};
   const s = c.scale || 1;
   const spec = specFor(c.layout || page.layout || 'classic');
   const m = c.measure || fallbackMeasure;
@@ -955,13 +971,13 @@ export function reflowPage(page, frames, ctx) {
       const tf = font(54 * s * (spec.titleScale || 1), 900);
       const lines = data.title ? wrapText(data.title, tf, f.w, m) : [];
       const lh = 54 * s * 1.35;
-      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * lh + 54 * s, text: ln, font: tf, color: COLORS.navy }); });
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * lh + 54 * s, text: ln, font: tf, color: PAL.navy }); });
     } else if (f.type === 'meta') {
       const isKicker = f.id && String(f.id).includes('kicker');
       const txt = isKicker ? (data.kicker || '') : metaLine;
       const ff = font(isKicker ? 24 * s : 23 * s, isKicker ? 700 : 400);
       const lines = txt ? wrapText(txt, ff, f.w, m) : [];
-      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * (isKicker ? 42 * s : 36 * s) + (isKicker ? 24 * s : 23 * s), text: ln, font: ff, color: isKicker ? COLORS.gold : COLORS.gray }); });
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * (isKicker ? 42 * s : 36 * s) + (isKicker ? 24 * s : 23 * s), text: ln, font: ff, color: isKicker ? PAL.gold : PAL.gray }); });
     } else if (f.type === 'caption') {
       let cap = '';
       if (cover && cover.photoId === f.photoId) cap = trimCaption(cover.caption);
@@ -973,9 +989,9 @@ export function reflowPage(page, frames, ctx) {
       const align = f.align || 'center';
       const cf = font(captionSize(s));
       const lh = captionLineHeight(s);
-      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: align === 'left' ? f.x : f.x + f.w / 2, y: f.y + i * lh + captionSize(s), text: ln, font: cf, color: COLORS.gray, align }); });
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: align === 'left' ? f.x : f.x + f.w / 2, y: f.y + i * lh + captionSize(s), text: ln, font: cf, color: PAL.gray, align }); });
     } else if (f.type === 'note') {
-      newPage.ops.push({ op: 'rect', x: f.x, y: f.y, w: f.w, h: f.h, fill: COLORS.paper });
+      newPage.ops.push({ op: 'rect', x: f.x, y: f.y, w: f.w, h: f.h, fill: PAL.paper });
     }
   }
   if (top > BOTTOM || !list.length) return { page: newPage, overflow: [], pages: [newPage] };

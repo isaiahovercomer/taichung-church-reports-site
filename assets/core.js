@@ -99,6 +99,7 @@ var RptCore = (function () {
   var RPT_MAX_COLLABORATORS_ = 300;
   var RPT_VIDEO_HOSTS_ = ['www.youtube.com', 'youtube.com', 'm.youtube.com', 'youtu.be', 'drive.google.com'];
   var RPT_LAYOUTS_ = ['classic', 'alternate', 'columns', 'magazine', 'wrap2', 'collage', 'tri', 'banner', 'newspaper', 'timeline', 'quote', 'card', 'sidebar', 'fullbleed', 'spread'];
+  var RPT_THEMES_ = ['classic-navy', 'rice-paper', 'sage-gray', 'warm-gray', 'pale-gold', 'newsprint', 'pale-blue', 'plum-ink', 'olive-moss', 'brick-clay', 'slate-mist', 'ink-wash'];
   var RPT_PRESETS_ = [
     { id: 'brief', name: '週訊短訊', words: 600, maxPhotos: 2, maxVideos: 0, pages: 1, layout: 'classic' },
     { id: 'standard', name: '標準報導', words: 1500, maxPhotos: 4, maxVideos: 1, pages: 2, layout: 'alternate' },
@@ -294,6 +295,7 @@ var RptCore = (function () {
       out[key] = Math.max(r.min, Math.min(r.max, n));
     }
     out.layout = arrayIncludes_(RPT_LAYOUTS_, s.layout) ? s.layout : 'classic';
+    out.theme = arrayIncludes_(RPT_THEMES_, s.theme) ? s.theme : 'classic-navy';
     return out;
   }
 
@@ -2249,6 +2251,7 @@ var RptCore = (function () {
     PRESETS: RPT_PRESETS_,
     SETTING_RANGES: RPT_SETTING_RANGES_,
     LAYOUTS: RPT_LAYOUTS_,
+    THEMES: RPT_THEMES_,
     VIDEO_HOSTS: RPT_VIDEO_HOSTS_,
     CELL_MAX: RPT_CELL_MAX_,
     DEFAULT_LIMITS: RPT_DEFAULT_LIMITS_,

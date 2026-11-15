@@ -6,22 +6,35 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=48b1878d06';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=48b1878d06';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=48b1878d06';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=48b1878d06';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=48b1878d06';
-import { mountA4Editor } from '../report/a4-editor.mjs?v=48b1878d06';
-import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=48b1878d06';
-import { buildPdf } from '../report/pdf.mjs?v=48b1878d06';
-import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=48b1878d06';
-import { createTour } from './tour.mjs?v=48b1878d06';
-import { helpView } from './help.mjs?v=48b1878d06';
-import { createPhotoLoader } from './photos.mjs?v=48b1878d06';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=48b1878d06';
-import { createSnapshot } from './snapshot.mjs?v=48b1878d06';
+import { ApiError, createApi, detectMode } from './api.mjs?v=6afe119b22';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=6afe119b22';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=6afe119b22';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=6afe119b22';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=6afe119b22';
+import { mountA4Editor } from '../report/a4-editor.mjs?v=6afe119b22';
+import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=6afe119b22';
+import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=6afe119b22';
+import { buildPdf } from '../report/pdf.mjs?v=6afe119b22';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=6afe119b22';
+import { createTour } from './tour.mjs?v=6afe119b22';
+import { helpView } from './help.mjs?v=6afe119b22';
+import { createPhotoLoader } from './photos.mjs?v=6afe119b22';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=6afe119b22';
+import { createSnapshot } from './snapshot.mjs?v=6afe119b22';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
+const THEME_KEY = 'rpt.report-theme';
+function rememberedTheme(fallback) {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (isThemeId(v)) return v;
+  } catch (e) { /* 無 localStorage 時略過 */ }
+  return isThemeId(fallback) ? fallback : DEFAULT_THEME_ID;
+}
+function rememberTheme(id) {
+  if (!isThemeId(id)) return;
+  try { localStorage.setItem(THEME_KEY, id); } catch (e) { /* 略過 */ }
+}
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -177,7 +190,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=48b1878d06', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=6afe119b22', import.meta.url))).text();
   return cssText;
 }
 
@@ -917,6 +930,7 @@ async function deleteSelected(list) {
 function settingsControls(initial) {
   const me = state.me;
   const s = Core.normalizeSettings(initial);
+  const initialTheme = rememberedTheme(s.theme);
   const ranges = me.ranges;
   const sharedWrap = h('div', { class: 'settings', 'data-testid': 'settings' });
   const a4Wrap = h('div', { class: 'settings settings-a4', 'data-testid': 'settings-a4' });
@@ -963,6 +977,25 @@ function settingsControls(initial) {
       ),
     ),
   );
+  const themeGroupName = `theme-${++uid}`;
+  const themeGroup = h(
+    'fieldset',
+    { class: 'field theme-choice', 'data-testid': 'theme-choice' },
+    h('legend', { class: 'label', text: '設計範本' }),
+    h(
+      'div',
+      { class: 'theme-grid' },
+      THEMES.map((t) =>
+        h(
+          'label',
+          { class: 'theme-card', 'data-testid': `theme-card-${t.id}`, title: t.desc },
+          h('input', { type: 'radio', name: themeGroupName, value: t.id, checked: initialTheme === t.id, 'data-theme': t.id }),
+          h('span', { class: 'theme-thumb', 'data-pattern': t.pattern, style: themeThumbStyle(t), 'aria-hidden': 'true' }),
+          h('span', { class: 'theme-card-name', text: t.name }),
+        ),
+      ),
+    ),
+  );
   const apply = (p) => {
     for (const key of Object.keys(inputs)) {
       inputs[key].input.value = String(p[key]);
@@ -973,6 +1006,7 @@ function settingsControls(initial) {
       a4Inputs[key].sync();
     }
     for (const r of layoutGroup.querySelectorAll('input[type=radio]')) r.checked = r.value === p.layout;
+    if (p.theme) for (const r of themeGroup.querySelectorAll('input[type=radio]')) r.checked = r.value === p.theme;
   };
   const presets = h(
     'div',
@@ -982,7 +1016,7 @@ function settingsControls(initial) {
       h('button', { type: 'button', class: 'pill', 'data-preset': p.id, onclick: () => apply(p), text: `${p.name}（${p.words}字／${p.maxPhotos}圖／${p.maxVideos}影片／${p.pages}頁）` }),
     ),
   );
-  sharedWrap.append(presets, ...sharedRows);
+  sharedWrap.append(presets, themeGroup, ...sharedRows);
   a4Wrap.append(...a4Rows, layoutGroup);
   const read = (store) => {
     const out = {};
@@ -993,10 +1027,13 @@ function settingsControls(initial) {
     el: sharedWrap,
     a4El: a4Wrap,
     layoutGroup,
+    themeGroup,
     get() {
       const out = { ...read(inputs), ...read(a4Inputs) };
       const checked = layoutGroup.querySelector('input[type=radio]:checked');
       out.layout = checked ? checked.value : 'classic';
+      const themeChecked = themeGroup.querySelector('input[type=radio]:checked');
+      out.theme = themeChecked ? themeChecked.value : rememberedTheme();
       return Core.normalizeSettings(out);
     },
     getShared() {
@@ -1016,6 +1053,7 @@ function settingsControls(initial) {
         maxVideos: rs.maxVideos ?? Number(inputs.maxVideos.input.value),
         pages: rs.pages ?? Number(a4Inputs.pages.input.value),
         layout: rs.layout || (layoutGroup.querySelector('input[type=radio]:checked') || {}).value,
+        theme: rs.theme || (themeGroup.querySelector('input[type=radio]:checked') || {}).value,
       });
     },
   };
@@ -2567,7 +2605,7 @@ function renderGenerate(panel, action, materials) {
     }
     setStatus('生成網頁報導中…');
     const comp = await composeReport({ action, materials: chosen, settings: s, summarizer: summarizer(), videoKeep });
-    const html = renderStandalone({ slug: '', data: comp.data, body: blocksToMarkdown(comp.blocks) }, { md, css: await getCss(), images: await imagesFor(comp), layout: s.layout });
+    const html = renderStandalone({ slug: '', data: comp.data, body: blocksToMarkdown(comp.blocks) }, { md, css: await getCss(), images: await imagesFor(comp), layout: s.layout, theme: s.theme });
     const omittedVideos = allVideos.length - comp.stats.videos;
     const omittedText = omittedVideos > 0 ? `・已省略 ${omittedVideos} 支影片` : '';
     results.web = {
@@ -2610,6 +2648,7 @@ function renderGenerate(panel, action, materials) {
         results.a4.title = next.title;
         results.a4.metaLine = next.metaLine;
         if (next.cover) results.a4.cover = next.cover;
+        if (next.theme) results.a4.theme = next.theme;
         if (results.a4.comp && next.blocks) {
           results.a4.comp = { ...results.a4.comp, blocks: next.blocks, data: { ...(results.a4.comp.data || {}), title: next.title } };
         }
@@ -2657,6 +2696,7 @@ function renderGenerate(panel, action, materials) {
       scale: res.scale,
       fileBase: fileBase(),
       layout: (s && s.layout) || res.layout || 'classic',
+      theme: (s && s.theme) || res.theme || results.a4?.theme || DEFAULT_THEME_ID,
     };
     const used = results.a4.comp;
     a4Info.dataset.pages = String(pageCount);
@@ -2677,6 +2717,7 @@ function renderGenerate(panel, action, materials) {
           cover: results.a4.comp.cover,
           blocks: (results.a4.comp.blocks || []).filter((b) => b.type !== 'video'),
           layout: s.layout,
+          theme: getTheme(s.theme || results.a4.theme),
           scale: results.a4.scale || 1,
           measure: measurePreviewText,
           imageSize: () => null,
@@ -2691,6 +2732,7 @@ function renderGenerate(panel, action, materials) {
         fileBase: fileBase(),
         images: results.a4.images,
         layout: s.layout,
+        theme: s.theme || results.a4.theme,
         scale: results.a4.scale || 1,
         metaLine: results.a4.metaLine || '',
         comp: results.a4.comp,
@@ -2770,7 +2812,13 @@ function renderGenerate(panel, action, materials) {
     }, immediate ? 80 : 280);
   };
 
-  for (const el of [settings.el, picks, sumSelect]) {
+  const invalidateExceptTheme = (ev) => {
+    if (ev.target && ev.target.closest('[data-testid=theme-choice]')) return;
+    invalidateAll();
+  };
+  settings.el.addEventListener('input', invalidateExceptTheme);
+  settings.el.addEventListener('change', invalidateExceptTheme);
+  for (const el of [picks, sumSelect]) {
     el.addEventListener('input', invalidateAll);
     el.addEventListener('change', invalidateAll);
   }
@@ -2795,6 +2843,24 @@ function renderGenerate(panel, action, materials) {
       })();
     }
   });
+  async function refreshWebTheme() {
+    if (!results.web || !results.web.comp) return;
+    const s = settings.get();
+    results.web.html = renderStandalone(
+      { slug: '', data: results.web.comp.data, body: blocksToMarkdown(results.web.comp.blocks) },
+      { md, css: await getCss(), images: await imagesFor(results.web.comp), layout: s.layout, theme: s.theme },
+    );
+    results.web.settings = { ...results.web.settings, theme: s.theme, layout: s.layout };
+    if (mode === 'web') frame.srcdoc = results.web.html;
+  }
+
+  settings.themeGroup.addEventListener('change', () => {
+    const s = settings.get();
+    rememberTheme(s.theme);
+    if (results.web) guard(refreshWebTheme)();
+    if (mode === 'a4' || results.a4) scheduleA4Preview(true);
+  });
+
   settings.layoutGroup.addEventListener('change', () => {
     if (mode === 'a4' || results.a4) {
       guard(async () => {

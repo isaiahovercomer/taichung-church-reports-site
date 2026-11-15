@@ -4,8 +4,9 @@
 // 安全原則：所有使用者欄位（標題、作者…）一律經 escapeHtml；
 // 內文只經 markdown-it（html:false），圖片只接受安全檔名，連結只接受 https/http/mailto/相對路徑。
 
-import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=48b1878d06';
-import { LOGO_DATA_URL } from './brand.mjs?v=48b1878d06';
+import { CATEGORIES, categorySlug, isSafeImageName, isValidDate } from './content.mjs?v=6afe119b22';
+import { LOGO_DATA_URL } from './brand.mjs?v=6afe119b22';
+import { getTheme, themeCss } from './report/themes.mjs?v=6afe119b22';
 
 export const SITE_NAME = '台中市召會';
 export const SITE_NAME_EN = 'THE CHURCH IN TAICHUNG';
@@ -395,14 +396,16 @@ export function renderStandalone(report, opts) {
     shareUrl,
     missingImages: opts.missingImages,
   });
+  const theme = getTheme(opts.theme);
+  const css = `${opts.css ?? ''}\n${themeCss(theme)}`;
   return renderPage({
     title: `${report.data.title || '（未命名報導）'}｜${SITE_TITLE}`,
     description: report.data.summary,
     root: null,
     content,
-    css: opts.css ?? '',
+    css,
     csp: STANDALONE_CSP,
-    bodyClass: `page-article standalone${/^(classic|alternate|columns)$/.test(opts.layout || '') ? ` layout-${opts.layout}` : ''}`,
+    bodyClass: `page-article standalone report-theme theme-${theme.id}${/^(classic|alternate|columns)$/.test(opts.layout || '') ? ` layout-${opts.layout}` : ''}`,
     og: { type: 'article', title: report.data.title },
   });
 }
