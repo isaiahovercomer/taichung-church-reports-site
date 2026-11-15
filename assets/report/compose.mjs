@@ -2,7 +2,7 @@
 // 再轉成 Markdown（給 render.mjs 生網頁）或交給 A4 排版（a4-layout.mjs）。
 // 純函式，不碰 DOM，Node 單元測試可直接 import。
 
-import { countChars } from './summarizer.mjs?v=23e087298e';
+import { countChars } from './summarizer.mjs?v=f3b8c882d4';
 
 /** 單一素材的照片順序：主圖 → 有圖說 → 其他（同級維持原順序） */
 export function orderPhotos(photos = []) {
@@ -33,22 +33,34 @@ export function pickPhotos(materials, max) {
   const mainSrc = lists.find((l) => l.list.length && l.list[0].cover) || lists.find((l) => l.list.length);
   if (!mainSrc) return out;
   const main = mainSrc.list.shift();
-  out.push({ photoId: main.id, materialId: mainSrc.id, caption: main.caption || '', isMain: true });
+  out.push({ photoId: main.id, materialId: mainSrc.id, caption: String(main.caption || '').trim(), isMain: true });
   // 主圖來源素材已經「用掉一張」，輪流從下一個素材開始
   let start = (lists.indexOf(mainSrc) + 1) % lists.length;
   while (out.length < max && lists.some((l) => l.list.length)) {
     for (let k = 0; k < lists.length && out.length < max; k++) {
       const l = lists[(start + k) % lists.length];
       const p = l.list.shift();
-      if (p) out.push({ photoId: p.id, materialId: l.id, caption: p.caption || '', isMain: false });
+      if (p) out.push({ photoId: p.id, materialId: l.id, caption: String(p.caption || '').trim(), isMain: false });
     }
     start = 0;
   }
   return out;
 }
 
-/** 挑影片：各素材輪流 */
-export function pickVideos(materials, max) {
+/** 挑影片：各素材輪流。keepKeys 為 materialId:索引 時只取清單內影片 */
+export function pickVideos(materials, max, keepKeys) {
+  if (keepKeys) {
+    const keep = new Set(keepKeys);
+    const out = [];
+    for (const m of materials) {
+      for (let i = 0; i < (m.videos || []).length; i++) {
+        if (out.length >= max) break;
+        if (keep.has(m.id + ':' + i)) out.push({ ...m.videos[i], materialId: m.id });
+      }
+      if (out.length >= max) break;
+    }
+    return out;
+  }
   const lists = materials.map((m) => ({ id: m.id, list: [...(m.videos || [])] }));
   const out = [];
   while (out.length < max && lists.some((l) => l.list.length)) {
@@ -93,7 +105,7 @@ export function groupByUnit(materials, units = []) {
   return groups.filter((g) => g.materials.length);
 }
 
-export async function composeReport({ action, materials: input, settings, summarizer, words, note, print = false, noCover = false, sections = true }) {
+export async function composeReport({ action, materials: input, settings, summarizer, words, note, print = false, noCover = false, sections = true, videoKeep = null }) {
   const target = words ?? settings.words;
   // 有單位時：素材依單位排序，每個單位前面加單位標題（全體在最前面、不加標題）
   const groups = sections ? groupByUnit(input, action.units || []) : [{ unit: null, materials: input }];
@@ -102,7 +114,7 @@ export async function composeReport({ action, materials: input, settings, summar
   if (groups.some((g) => g.unit)) for (const g of groups) if (g.unit) sectionAt.set(g.materials[0].id, g.unit.name);
   const summary = await summarizer.summarize({ materials, targetChars: target });
   const photos = pickPhotos(materials, settings.maxPhotos);
-  const videos = print ? [] : pickVideos(materials, settings.maxVideos);
+  const videos = print ? [] : pickVideos(materials, settings.maxVideos, videoKeep);
 
   const images = [];
   const imageName = (photoId) => {
@@ -116,7 +128,7 @@ export async function composeReport({ action, materials: input, settings, summar
 
   // noCover：A4 自訂排版的第 2 頁以後沒有大圖；主圖改當一般照片放進內文
   const main = noCover ? null : photos.find((p) => p.isMain) || null;
-  const cover = main ? { photoId: main.photoId, imageName: imageName(main.photoId), caption: main.caption } : null;
+  const cover = main ? { photoId: main.photoId, imageName: imageName(main.photoId), caption: String(main.caption || '').trim() } : null;
 
   const blocks = [];
   materials.forEach((m, idx) => {
@@ -131,9 +143,9 @@ export async function composeReport({ action, materials: input, settings, summar
     sec.paragraphs.forEach((p) => {
       blocks.push({ type: 'para', text: p, materialId: m.id });
       const ph = queue.shift();
-      if (ph) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: ph.caption, materialId: m.id });
+      if (ph) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
     });
-    for (const ph of queue) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: ph.caption, materialId: m.id });
+    for (const ph of queue) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
     if (m.kind === 'testimony' && m.author) blocks.push({ type: 'byline', text: `—— ${m.author}`, materialId: m.id });
     for (const v of myVideos) {
       const url = safeHttpsUrl(v.url);

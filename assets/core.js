@@ -27,11 +27,12 @@ var RptCore = (function () {
   // ---------- 常數 ----------
   // version 3：合併查詢加速（boot／action.open／photos.getMany）、協作者姓名與常用聯絡人、行動錄音逐字稿（OpenAI）
   // version 8：產出發佈（outputs.publish／outputs.public／outputs.unpublish），outputs.save 支援 A4 圖檔
+  // version 9：outputs.get 供前端查看／下載已存的產出
   // version 7：行動的單位／區域（units）、素材所屬單位（unitId）
   // version 6：總管理者批次刪除行動（actions.deleteMany）
   // version 5：登入時回傳首頁資料（auth.verifyCode withBoot）
   // version 4：行動日期區間（endDate）、防重複建立（requestId、同名同日合併）、刪除行動（actions.delete）
-  var RPT_VERSION_ = 8;
+  var RPT_VERSION_ = 9;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -97,7 +98,7 @@ var RptCore = (function () {
   var RPT_CELL_MAX_ = 40000;
   var RPT_MAX_COLLABORATORS_ = 300;
   var RPT_VIDEO_HOSTS_ = ['www.youtube.com', 'youtube.com', 'm.youtube.com', 'youtu.be', 'drive.google.com'];
-  var RPT_LAYOUTS_ = ['classic', 'alternate', 'columns', 'magazine', 'wrap2', 'collage', 'tri', 'banner', 'newspaper', 'timeline', 'quote', 'card', 'sidebar', 'fullbleed'];
+  var RPT_LAYOUTS_ = ['classic', 'alternate', 'columns', 'magazine', 'wrap2', 'collage', 'tri', 'banner', 'newspaper', 'timeline', 'quote', 'card', 'sidebar', 'fullbleed', 'spread'];
   var RPT_PRESETS_ = [
     { id: 'brief', name: '週訊短訊', words: 600, maxPhotos: 2, maxVideos: 0, pages: 1, layout: 'classic' },
     { id: 'standard', name: '標準報導', words: 1500, maxPhotos: 4, maxVideos: 1, pages: 2, layout: 'alternate' },
@@ -1309,6 +1310,28 @@ var RptCore = (function () {
     if (rec.published && rec.publicId) out.publicUrl = publicUrlFor_(rec.publicId);
     return out;
   }
+  /* v1.6.2 / version 9: outputs.get */
+  function getOutput_(env, ctx, data) {
+    var action = loadAction_(env, ctx, data && data.actionId);
+    var rec = findOutput_(env, action.id, data && data.outputId);
+    if (!rec) fail_('NOT_FOUND', '找不到產出');
+    var out = sanitizeOwnerOutput_(rec);
+    if (rec.kind === 'a4') {
+      var mime = rec.format === 'pdf' ? 'application/pdf' : 'image/png';
+      out.mime = mime;
+      var file = typeof env.store.getFile === 'function' ? env.store.getFile(action.id, rec.fileId, true) : null;
+      if (file && file.dataUrl) out.dataUrl = file.dataUrl;
+      else if (file && file.base64) out.base64 = file.base64;
+      if (!out.dataUrl && !out.base64 && typeof env.store.readTextFile === 'function') {
+        var raw = env.store.readTextFile(rec.fileId);
+        if (raw && String(raw).indexOf('data:') === 0) out.dataUrl = raw;
+        else if (raw) out.base64 = raw;
+      }
+    } else {
+      out.html = env.store.readTextFile(rec.fileId);
+    }
+    return { output: out };
+  }
   function publicOutputView_(rec, html) {
     return {
       id: rec.publicId,
@@ -2156,6 +2179,7 @@ var RptCore = (function () {
     'video.complete': completeVideoUpload_,
     'outputs.save': saveOutput_,
     'outputs.list': listOutputs_,
+    'outputs.get': getOutput_,
     'outputs.publish': publishOutput_,
     'outputs.unpublish': unpublishOutput_,
     'admin.list': listAdmins_,

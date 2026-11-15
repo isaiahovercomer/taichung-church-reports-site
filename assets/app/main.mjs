@@ -6,19 +6,19 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=23e087298e';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=23e087298e';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=23e087298e';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=23e087298e';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=23e087298e';
-import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=23e087298e';
-import { buildPdf } from '../report/pdf.mjs?v=23e087298e';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=23e087298e';
-import { createTour } from './tour.mjs?v=23e087298e';
-import { helpView } from './help.mjs?v=23e087298e';
-import { createPhotoLoader } from './photos.mjs?v=23e087298e';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=23e087298e';
-import { createSnapshot } from './snapshot.mjs?v=23e087298e';
+import { ApiError, createApi, detectMode } from './api.mjs?v=f3b8c882d4';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=f3b8c882d4';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=f3b8c882d4';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=f3b8c882d4';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=f3b8c882d4';
+import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=f3b8c882d4';
+import { buildPdf } from '../report/pdf.mjs?v=f3b8c882d4';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=f3b8c882d4';
+import { createTour } from './tour.mjs?v=f3b8c882d4';
+import { helpView } from './help.mjs?v=f3b8c882d4';
+import { createPhotoLoader } from './photos.mjs?v=f3b8c882d4';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=f3b8c882d4';
+import { createSnapshot } from './snapshot.mjs?v=f3b8c882d4';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 
@@ -176,7 +176,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=23e087298e', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=f3b8c882d4', import.meta.url))).text();
   return cssText;
 }
 
@@ -291,7 +291,190 @@ root.replaceChildren(bar, demoBox, statusEl, view);
 
 function showDemoCode(to, code) {
   demoBox.hidden = false;
-  demoBox.textContent = `示範模式不會真的寄信：寄給 ${to} 的驗證碼是 ${code}`;
+  demoBox.textContent = `示範模式不會寄信，驗證碼就在這裡：${code}（${to}）`;
+}
+function syncDateHint(input, testid) {
+  const hint = document.querySelector('[data-testid="' + testid + '"]');
+  if (hint) hint.textContent = input.value ? formatDate(input.value) : '';
+}
+
+function openDialog({ title, body, actions, testid = 'app-dialog' }) {
+  const dialog = h('dialog', { class: 'dialog', 'data-testid': testid, 'aria-label': title });
+  dialog.append(h('h3', { text: title }));
+  if (body) dialog.append(body);
+  const row = h('div', { class: 'dialog-actions' });
+  function close() {
+    if (dialog.open) dialog.close();
+    dialog.remove();
+  }
+  for (const a of actions || []) {
+    row.append(h('button', {
+      type: 'button',
+      class: a.primary ? 'btn primary' : 'btn',
+      text: a.text,
+      'data-testid': a.testid || (a.primary ? 'dialog-ok' : 'dialog-cancel'),
+      onclick: () => { if (a.onClick) a.onClick(close); else close(); },
+    }));
+  }
+  dialog.append(row);
+  document.body.append(dialog);
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  return { overlay: dialog, box: dialog, close };
+}
+
+function confirmDialog(message, { title = '請確認', confirmText = '確定', cancelText = '取消', testid = 'confirm-dialog' } = {}) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => { if (!done) { done = true; resolve(value); } };
+    const dlg = openDialog({
+      title,
+      body: h('p', { class: 'dialog-message', text: message }),
+      testid,
+      actions: [
+        { text: cancelText, testid: 'dialog-cancel', onClick: (close) => { finish(false); close(); } },
+        { text: confirmText, primary: true, testid: 'dialog-ok', onClick: (close) => { finish(true); close(); } },
+      ],
+    });
+    dlg.overlay.addEventListener('cancel', (e) => { e.preventDefault(); dlg.close(); finish(false); });
+    dlg.overlay.addEventListener('close', () => finish(false));
+  });
+}
+
+function promptDialog(message, { title = '請輸入', defaultValue = '', confirmText = '確定', cancelText = '取消', testid = 'prompt-dialog' } = {}) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => { if (!done) { done = true; resolve(value); } };
+    const input = h('input', { class: 'dialog-input', 'data-testid': 'prompt-input', value: defaultValue || '' });
+    const submit = () => finish(input.value);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submit();
+        dlg.close();
+      }
+    });
+    const dlg = openDialog({
+      title,
+      body: h('div', {}, h('p', { class: 'dialog-message', text: message }), input),
+      testid,
+      actions: [
+        { text: cancelText, testid: 'dialog-cancel', onClick: (close) => { finish(null); close(); } },
+        { text: confirmText, primary: true, testid: 'dialog-ok', onClick: (close) => { submit(); close(); } },
+      ],
+    });
+    dlg.overlay.addEventListener('cancel', (e) => { e.preventDefault(); dlg.close(); finish(null); });
+    dlg.overlay.addEventListener('close', () => finish(null));
+    setTimeout(() => input.focus(), 0);
+  });
+}
+
+function askPickVideos(videos, max) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (value) => { if (!done) { done = true; resolve(value); } };
+    const list = h('div', { class: 'video-pick-list' });
+    const boxes = [];
+    videos.forEach((item, index) => {
+      const box = h('input', { type: 'checkbox', value: item.key, 'data-testid': `video-keep-${item.key}` });
+      if (index < max) box.checked = true;
+      const label = h('label', { class: 'video-pick-item' }, box, h('span', { text: `${item.materialTitle}：${item.video.title || item.video.url || '未命名影片'}` }));
+      boxes.push(box);
+      box.addEventListener('change', () => {
+        const checkedCount = boxes.filter((b) => b.checked).length;
+        boxes.forEach((b) => { b.disabled = checkedCount >= max && !b.checked; });
+      });
+      list.append(label);
+    });
+    boxes.forEach((b) => { b.disabled = boxes.filter((x) => x.checked).length >= max && !b.checked; });
+    const body = h('div', {}, h('p', { text: `有 ${videos.length} 支影片，超過上限 ${max} 支，請勾選要保留的（最多 ${max} 支），其餘將被省略。` }), list);
+    const dlg = openDialog({
+      title: '選擇要保留的影片',
+      body,
+      testid: 'video-pick-dialog',
+      actions: [
+        { text: '取消', testid: 'dialog-cancel', onClick: (close) => { finish(null); close(); } },
+        { text: '確認保留', primary: true, testid: 'dialog-ok', onClick: (close) => { finish(boxes.filter((b) => b.checked).map((b) => b.value)); close(); } },
+      ],
+    });
+    dlg.overlay.addEventListener('cancel', (e) => { e.preventDefault(); dlg.close(); finish(null); });
+    dlg.overlay.addEventListener('close', () => finish(null));
+  });
+}
+
+function base64ToBlob(base64, mime) {
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  return new Blob([bytes], { type: mime });
+}
+
+async function dataUrlToBlob(dataUrl) {
+  return (await fetch(dataUrl)).blob();
+}
+
+function outputFileBase(o) {
+  const page = o.pageIndex != null ? `-p${o.pageIndex + 1}` : '';
+  return `${(o.title || '未命名報導').replace(/[\\/:*?"<>|]/g, '')}${page}`;
+}
+
+async function viewOutput(action, o) {
+  if (o.published && o.publicId && o.kind !== 'a4') {
+    window.open(publicReportUrl(o.publicId), '_blank', 'noopener');
+    return;
+  }
+  const res = await api.call('outputs.get', { actionId: action.id, outputId: o.id });
+  const rec = res.output || res;
+  const pageLabel = rec.pageIndex != null ? `（第 ${rec.pageIndex + 1} 頁）` : '';
+  if (rec.kind === 'a4') {
+    const mime = rec.mime || (rec.format === 'pdf' ? 'application/pdf' : 'image/png');
+    let src = rec.dataUrl || null;
+    if (!src && rec.base64) src = URL.createObjectURL(base64ToBlob(rec.base64, mime));
+    if (!src) throw new Error('找不到檔案內容');
+    const body = mime === 'application/pdf' ? h('embed', { src, type: 'application/pdf', class: 'output-preview' }) : h('img', { src, class: 'output-preview', alt: `${rec.title || 'A4 報導'}${pageLabel}` });
+    openDialog({ title: `${rec.title || '未命名報導'}${pageLabel}`, body, actions: [{ text: '關閉', testid: 'dialog-ok' }], testid: 'output-view-dialog' });
+    return;
+  }
+  const frame = h('iframe', { class: 'output-preview-frame', title: rec.title || '網頁報導' });
+  frame.srcdoc = rec.html || '';
+  openDialog({ title: rec.title || '未命名報導', body: frame, actions: [{ text: '關閉', testid: 'dialog-ok' }], testid: 'output-view-dialog' });
+}
+
+async function downloadOutput(action, o) {
+  const res = await api.call('outputs.get', { actionId: action.id, outputId: o.id });
+  const rec = res.output || res;
+  const base = outputFileBase(rec);
+  if (rec.kind === 'a4') {
+    const mime = rec.mime || (rec.format === 'pdf' ? 'application/pdf' : 'image/png');
+    const ext = rec.format === 'pdf' ? 'pdf' : 'png';
+    let blob = null;
+    if (rec.dataUrl) blob = await dataUrlToBlob(rec.dataUrl);
+    else if (rec.base64) blob = base64ToBlob(rec.base64, mime);
+    if (!blob) throw new Error('找不到檔案內容');
+    download(blob, `${base}.${ext}`);
+    return;
+  }
+  download(new Blob([rec.html || ''], { type: 'text/html' }), `${base}.html`);
+}
+
+function applyRegenSettings(settings, action) {
+  try {
+    const raw = sessionStorage.getItem('regen-settings:' + action.id);
+    if (!raw) return;
+    sessionStorage.removeItem('regen-settings:' + action.id);
+    const rs = JSON.parse(raw);
+    if (!rs) return;
+    if (settings && typeof settings.set === 'function') { settings.set(rs); return; }
+    const setVal = (name, value) => {
+      if (value == null) return;
+      const el = document.querySelector(`[name="${name}"]`);
+      if (el) { el.value = String(value); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('input', { bubbles: true })); }
+    };
+    setVal('words', rs.words);
+    setVal('maxPhotos', rs.maxPhotos);
+    setVal('maxVideos', rs.maxVideos);
+    setVal('pages', rs.pages);
+  } catch {
+    /* 忽略損壞的暫存設定 */
+  }
 }
 
 /** 頁尾版本號後面補上後端版本（登入後才知道） */
@@ -305,7 +488,7 @@ function renderBar() {
   showBackendVersion();
   const badge =
     mode === 'demo'
-      ? h('span', { class: 'mode-badge', 'data-testid': 'mode-badge', text: `示範模式${autoDemo ? '・尚未設定後端' : ''}（資料只在這個分頁，重新整理就清空）` })
+      ? h('span', { class: 'mode-badge', 'data-testid': 'mode-badge', text: `示範模式${autoDemo ? '・尚未設定後端' : ''}（資料存在這個分頁，關閉分頁才會清除）` })
       : mode === 'mock'
         ? h('span', { class: 'mode-badge', text: '本機 mock 後端' })
         : null;
@@ -460,14 +643,14 @@ function renderLogin() {
   const codeForm = h(
     'form',
     { class: 'login-step', hidden: true, 'data-testid': 'code-form' },
-    field('驗證碼（6 位數）', code, '請到信箱收信，10 分鐘內有效；輸入錯誤 5 次需重新索取。'),
+    field('驗證碼（6 位數）', code, mode === 'demo' ? '驗證碼會直接顯示在這個頁面，10 分鐘內有效；輸入錯誤 5 次需重新索取。' : '請到信箱收信，10 分鐘內有效；輸入錯誤 5 次需重新索取。'),
     h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit', text: '登入' }), h('button', { class: 'btn', type: 'button', text: '換一個 email', onclick: () => ((codeForm.hidden = true), (emailForm.hidden = false)) })),
   );
   const emailForm = h(
     'form',
     { class: 'login-step', 'data-testid': 'email-form' },
-    field('Email', email, '我們會寄一組 6 位數驗證碼給您，不需要密碼。'),
-    h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit', text: '寄送驗證碼' })),
+    field('Email', email, mode === 'demo' ? '不會寄信，驗證碼會直接顯示在這個頁面。' : '我們會寄一組 6 位數驗證碼給您，不需要密碼。'),
+    h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit', text: mode === 'demo' ? '取得示範驗證碼' : '寄送驗證碼' })),
   );
   guardSubmit(emailForm, async (ev) => {
     ev.preventDefault();
@@ -646,7 +829,7 @@ function drawHome(list) {
       h(
         'span',
         { class: 'actions' },
-        h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' }),
+        h('a', { class: 'btn primary', href: '#/new', 'data-testid': 'new-action', text: '建立新行動' }),
         isSuper && list.length && !selecting
           ? h('button', {
               type: 'button',
@@ -672,7 +855,7 @@ function drawHome(list) {
           { class: 'empty', 'data-testid': 'empty-actions' },
           h('p', { text: '您還沒有任何行動。按「建立新行動」開始，您就是這個行動的負責人，可以再邀請共同協作者一起上傳素材。' }),
           h('p', { class: 'hint', text: '若您是受邀的協作者，請確認負責人已把您的 email 加入協作者名單。' }),
-          h('p', {}, h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' })),
+          h('p', {}, h('a', { class: 'btn primary', href: '#/new', 'data-testid': 'new-action', text: '建立新行動' })),
         ),
   );
 }
@@ -683,8 +866,9 @@ async function deleteSelected(list) {
   if (!picked.length) return;
   const names = picked.slice(0, 10).map((a) => `・${a.name}（${formatDateRange(a.date, a.endDate)}）`);
   if (picked.length > 10) names.push(`…還有 ${picked.length - 10} 個`);
-  const typed = prompt(
+  const typed = await promptDialog(
     `要刪除這 ${picked.length} 個行動嗎？\n\n${names.join('\n')}\n\n素材、照片、錄音會一起刪除；雲端硬碟中的資料夾會移到垃圾桶，30 天內可以救回。\n請輸入「刪除」兩個字確認：`,
+    { title: '刪除行動', confirmText: '確認刪除', testid: 'delete-many-dialog' },
   );
   if (typed == null) return;
   if (typed.trim() !== '刪除') {
@@ -823,6 +1007,16 @@ function settingsControls(initial) {
       out.layout = checked ? checked.value : 'classic';
       return out;
     },
+    set(rs) {
+      if (!rs) return;
+      apply({
+        words: rs.words ?? Number(inputs.words.input.value),
+        maxPhotos: rs.maxPhotos ?? Number(inputs.maxPhotos.input.value),
+        maxVideos: rs.maxVideos ?? Number(inputs.maxVideos.input.value),
+        pages: rs.pages ?? Number(a4Inputs.pages.input.value),
+        layout: rs.layout || (layoutGroup.querySelector('input[type=radio]:checked') || {}).value,
+      });
+    },
   };
 }
 
@@ -853,7 +1047,6 @@ export function renderA4Preview(container, result) {
       c.width = page.width;
       c.height = page.height;
       c.getContext('2d').drawImage(page, 0, 0);
-      pageEl.append(c);
       url = c.toDataURL('image/png');
     } else if (page.canvas) {
       const src = page.canvas;
@@ -861,11 +1054,9 @@ export function renderA4Preview(container, result) {
       c.width = src.width || 1240;
       c.height = src.height || 1754;
       c.getContext('2d').drawImage(src, 0, 0);
-      pageEl.append(c);
       url = c.toDataURL('image/png');
     } else if (page.dataUrl) {
       url = page.dataUrl;
-      pageEl.append(h('img', { src: url, alt: `第 ${i + 1} 頁` }));
     } else if (Array.isArray(page.ops)) {
       const c = document.createElement('canvas');
       c.width = 1240;
@@ -874,11 +1065,22 @@ export function renderA4Preview(container, result) {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, c.width, c.height);
       drawA4Ops(ctx, page.ops, result.images);
-      pageEl.append(c);
       url = c.toDataURL('image/png');
     }
+    if (url) pageEl.append(h('img', { src: url, alt: `第 ${i + 1} 頁` }));
     pageEl.append(
-      h('figcaption', {}, h('span', { class: 'a4-page-no', text: `第 ${i + 1} / ${total} 頁` }), url ? h('a', { href: url, download: `${base}-p${i + 1}.png`, class: 'btn small', 'data-testid': `png-${i + 1}`, text: `下載第 ${i + 1} 頁 PNG` }) : null),
+      h('figcaption', {}, h('span', { class: 'a4-page-no', text: `第 ${i + 1} / ${total} 頁` }), url ? h('button', {
+        type: 'button', class: 'btn', 'data-testid': `png-${i + 1}`, text: `下載第 ${i + 1} 頁 PNG`,
+        onclick: () => {
+          if (!url) return;
+          if (url.startsWith('data:')) {
+            download(new Blob([Uint8Array.from(atob(url.split(',')[1]), (c) => c.charCodeAt(0))], { type: 'image/png' }), `${base}-p${i + 1}.png`);
+          } else {
+            const a = document.createElement('a');
+            a.href = url; a.download = `${base}-p${i + 1}.png`; a.click();
+          }
+        },
+      }) : null),
     );
     container.append(pageEl);
   });
@@ -920,7 +1122,7 @@ function renderOutputsList(action, outputs, onChanged) {
     return box;
   }
   for (const o of outputs) {
-    const kindLabel = o.kind === 'a4' ? `A4（${o.format || ''}）` : '網頁';
+    const kindLabel = o.kind === 'a4' ? `A4（${o.format || ''}${o.pageIndex != null ? `・第 ${o.pageIndex + 1} 頁` : ''}）` : '網頁';
     const row = h(
       'div',
       { class: 'output-row' },
@@ -928,6 +1130,14 @@ function renderOutputsList(action, outputs, onChanged) {
       h('span', { class: 'output-title', text: o.title || '未命名報導' }),
       h('span', { class: 'output-date', text: (o.createdAt || '').slice(0, 10) }),
     );
+    const actions = h(
+      'div',
+      { class: 'output-actions' },
+      h('button', { type: 'button', class: 'btn small', text: '查看', 'data-testid': `output-view-${o.id}`, onclick: async () => { try { await viewOutput(action, o); } catch (e) { setStatus('無法查看：' + errorText(e)); } } }),
+      h('button', { type: 'button', class: 'btn small', text: '下載', 'data-testid': `output-download-${o.id}`, onclick: async () => { try { await downloadOutput(action, o); setStatus('已開始下載'); } catch (e) { setStatus('無法下載：' + errorText(e)); } } }),
+      h('button', { type: 'button', class: 'btn small', text: '以此設定重新生成', 'data-testid': `output-regen-${o.id}`, onclick: () => { sessionStorage.setItem('regen-settings:' + action.id, JSON.stringify(o.settings || {})); location.hash = `#/a/${action.id}/generate`; } }),
+    );
+    row.append(actions);
     if (o.published && o.publicId) {
       row.append(h('a', { href: publicReportUrl(o.publicId), target: '_blank', rel: 'noopener', text: '公開連結' }));
       row.append(
@@ -969,7 +1179,7 @@ function contactChips({ exclude, onPick, testid = 'contact-chips' }) {
                 title: '從常用聯絡人刪除',
                 text: '×',
                 onclick: async () => {
-                  if (!confirm(`從常用聯絡人刪除 ${c.name ? `${c.name}（${c.email}）` : c.email}？（不影響已加入的行動）`)) return;
+                  if (!(await confirmDialog(`從常用聯絡人刪除 ${c.name ? `${c.name}（${c.email}）` : c.email}？（不影響已加入的行動）`, { title: '刪除常用聯絡人', testid: 'delete-contact-dialog' }))) return;
                   try {
                     state.contacts = (await api.call('contacts.remove', { email: c.email })).contacts;
                   } catch (e) {
@@ -1096,8 +1306,8 @@ function unitsEditor(initial = [], { hasMaterials = () => false } = {}) {
         class: 'btn small',
         text: '刪除',
         'aria-label': '刪除這個單位',
-        onclick: () => {
-          if (r.id && hasMaterials(r.id) && !confirm(`「${name.value}」已經有素材標了這個單位，刪除後那些素材會歸到「全體」。確定刪除？`)) return;
+        onclick: async () => {
+          if (r.id && hasMaterials(r.id) && !(await confirmDialog(`「${name.value}」已經有素材標了這個單位，刪除後那些素材會歸到「全體」。確定刪除？`, { title: '刪除單位', testid: 'delete-unit-dialog' }))) return;
           rows.splice(rows.indexOf(r), 1);
           r.row.remove();
           redrawMoves();
@@ -1145,8 +1355,10 @@ function actionForm(action, onSubmit, opts = {}) {
   const a = action || { name: '', date: taipeiToday(), endDate: '', place: '', description: '', owners: [], collaborators: [], openSubmission: false, defaults: Core.PRESETS[1] };
   const f = {
     name: h('input', { name: 'name', required: true, maxlength: 100, value: a.name }),
-    date: h('input', { name: 'date', type: 'date', required: true, value: a.date }),
-    endDate: h('input', { name: 'endDate', type: 'date', value: a.endDate || '', min: a.date }),
+    date: h('input', { name: 'date', type: 'date', lang: 'zh-TW', required: true, value: a.date, oninput: (e) => syncDateHint(e.target, 'date-hint'), onchange: (e) => syncDateHint(e.target, 'date-hint') }),
+    endDate: h('input', { name: 'endDate', type: 'date', lang: 'zh-TW', value: a.endDate || '', min: a.date, oninput: (e) => syncDateHint(e.target, 'end-date-hint'), onchange: (e) => syncDateHint(e.target, 'end-date-hint') }),
+    dateHint: h('output', { class: 'date-hint', 'data-testid': 'date-hint', text: a.date ? formatDate(a.date) : '' }),
+    endDateHint: h('output', { class: 'date-hint', 'data-testid': 'end-date-hint', text: a.endDate ? formatDate(a.endDate) : '' }),
     place: h('input', { name: 'place', maxlength: 100, value: a.place }),
     description: h('textarea', { name: 'description', class: 'short', rows: 3, maxlength: 2000, value: a.description }),
     owners: h('input', { name: 'owners', type: 'text', value: (a.owners || []).join(', '), disabled: !!action && !isSuper }),
@@ -1168,7 +1380,7 @@ function actionForm(action, onSubmit, opts = {}) {
     'form',
     { class: 'panel action-form', 'data-testid': 'action-form' },
     field('行動名稱', f.name),
-    h('div', { class: 'row-2' }, field('開始日期', f.date), field('結束日期（選填）', f.endDate, '多天的行動才填，例如 11/4～11/6；一天的行動留空')),
+    h('div', { class: 'row-2' }, field('開始日期', h('div', {}, f.date, f.dateHint)), field('結束日期（選填）', h('div', {}, f.endDate, f.endDateHint), '多天的行動才填，例如 11/4～11/6；一天的行動留空')),
     field('地點', f.place),
     field('說明', f.description),
     units.el,
@@ -1193,6 +1405,8 @@ function actionForm(action, onSubmit, opts = {}) {
   f.date.addEventListener('change', () => {
     f.endDate.min = f.date.value;
     if (f.endDate.value && f.endDate.value < f.date.value) f.endDate.value = '';
+    syncDateHint(f.date, 'date-hint');
+    syncDateHint(f.endDate, 'end-date-hint');
   });
   guardSubmit(form, async (ev) => {
     ev.preventDefault();
@@ -1335,7 +1549,7 @@ async function renderAdmin() {
                       type: 'button',
                       text: '移除',
                       onclick: async () => {
-                        if (!confirm(`確定移除 ${a.email}？`)) return;
+                        if (!(await confirmDialog(`確定移除 ${a.email}？`, { title: '移除管理者', testid: 'remove-admin-dialog' }))) return;
                         try {
                           draw(await api.call('admin.remove', { email: a.email }));
                         } catch (e) {
@@ -1388,7 +1602,7 @@ async function renderAiConfig(box) {
               type: 'button',
               text: '刪除金鑰',
               onclick: async () => {
-                if (!confirm('刪除 OpenAI 金鑰？刪除後無法自動轉錄、AI 修正與彙整。')) return;
+                if (!(await confirmDialog('刪除 OpenAI 金鑰？刪除後無法自動轉錄、AI 修正與彙整。', { title: '刪除金鑰', testid: 'delete-key-dialog' }))) return;
                 try {
                   draw(await api.call('ai.config.set', { clearKey: true }));
                   state.me = null;
@@ -1435,8 +1649,8 @@ async function renderGlobalRules(box) {
         draw(await api.call('rules.set', { scope: 'global', rules }));
         setStatus('已儲存全站逐字稿規則');
       },
-      onReset: () => {
-        if (confirm('把全站規則恢復成預設值？（儲存後才生效）')) fill(box, title, rulesEditor(r.defaults, { h, field, editable: true, testid: 'global-rules-editor', onSave: async (rules) => draw(await api.call('rules.set', { scope: 'global', rules })) }).el);
+      onReset: async () => {
+        if (await confirmDialog('把全站規則恢復成預設值？（儲存後才生效）', { title: '恢復預設規則', testid: 'reset-rules-dialog' })) fill(box, title, rulesEditor(r.defaults, { h, field, editable: true, testid: 'global-rules-editor', onSave: async (rules) => draw(await api.call('rules.set', { scope: 'global', rules })) }).el);
       },
     });
     fill(box, title, h('p', { class: 'hint', text: '轉錄、AI 修正與彙整都會用到；可以隨時增修。各行動的負責人另外可以在「素材」頁的錄音區加上只用在該行動的規則。' }), ed.el);
@@ -1536,7 +1750,7 @@ async function renderAction(id, tab, { force = false } = {}) {
           'data-testid': 'leave-action',
           text: '退出這個行動',
           onclick: async () => {
-            if (!confirm(`確定退出「${action.name}」？您已上傳的素材會保留給負責人。`)) return;
+            if (!(await confirmDialog(`確定退出「${action.name}」？您已上傳的素材會保留給負責人。`, { title: '退出行動', testid: 'leave-action-dialog' }))) return;
             try {
               await api.call('actions.removeCollaborator', { actionId: id, email: state.me.email });
               invalidate();
@@ -1609,7 +1823,7 @@ function deleteActionBox(action, materials) {
       text: '刪除這個行動',
       onclick: async () => {
         err.textContent = '';
-        const typed = prompt(`確定要刪除「${action.name}」？\n請輸入行動名稱確認：`);
+        const typed = await promptDialog(`確定要刪除「${action.name}」？\n請輸入行動名稱確認：`, { title: '刪除這個行動', defaultValue: '', confirmText: '確認刪除', testid: 'delete-action-dialog' });
         if (typed == null) return;
         try {
           await api.call('actions.delete', { id: action.id, confirmName: typed });
@@ -1681,7 +1895,7 @@ function renderMembers(panel, action) {
       h('div', { class: 'contacts-box' }, h('span', { class: 'label', text: '常用聯絡人（點一下直接加入這個行動）' }), chips.el),
       h(
         'div',
-        { class: 'table-scroll' },
+        { class: 'table-scroll', 'data-testid': 'members-list' },
         h(
           'table',
           { class: 'table', 'data-testid': 'members-table' },
@@ -1706,9 +1920,10 @@ function renderMembers(panel, action) {
                           class: 'btn small',
                           type: 'button',
                           text: '改姓名',
+                          'data-testid': `rename-member-${r.email}`,
                           'aria-label': `修改 ${r.email} 的姓名`,
                           onclick: async () => {
-                            const n = prompt(`${r.email} 的姓名（選填）`, r.name);
+                            const n = await promptDialog(`${r.email} 的姓名（選填）`, { title: '改姓名', defaultValue: r.name || '', confirmText: '儲存', testid: 'rename-member-dialog' });
                             if (n == null || !n.trim()) return;
                             await addOne(a, r.email, n.trim());
                           },
@@ -1717,9 +1932,10 @@ function renderMembers(panel, action) {
                           class: 'btn small danger',
                           type: 'button',
                           text: '移除',
+                          'data-testid': `remove-member-${r.email}`,
                           'aria-label': `移除 ${r.email}`,
                           onclick: async () => {
-                            if (!confirm(`確定移除協作者 ${r.name ? `${r.name}（${r.email}）` : r.email}？對方已上傳的素材會保留。`)) return;
+                            if (!(await confirmDialog(`確定移除協作者 ${r.name ? `${r.name}（${r.email}）` : r.email}？對方已上傳的素材會保留。`, { title: '移除協作者', testid: 'remove-collab-dialog' }))) return;
                             err.textContent = '';
                             try {
                               const next = (await api.call('actions.removeCollaborator', { actionId: a.id, email: r.email })).action;
@@ -1810,7 +2026,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
       ...form.photos.map((p, i) => {
         const img = h('img', { alt: '', loading: 'lazy' });
         photoThumbUrl(action.id, p.id).then((u) => (img.src = u)).catch(() => {});
-        const cap = h('input', { name: 'caption', maxlength: 300, placeholder: '圖說（選填，有圖說的照片會優先選用）', value: p.caption, oninput: (e) => (p.caption = e.target.value) });
+        const cap = h('input', { name: 'caption', maxlength: 300, placeholder: '照片說明（選填）', value: p.caption, oninput: (e) => (p.caption = e.target.value) });
         const cover = h('input', {
           type: 'radio',
           name: 'cover-photo',
@@ -1983,7 +2199,7 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
         title: title.value,
         author: author.value,
         text: text.value,
-        photos: form.photos.map((p) => ({ id: p.id, caption: p.caption, cover: !!p.cover })),
+        photos: form.photos.map((p) => ({ id: p.id, caption: String(p.caption || '').trim(), cover: !!p.cover })),
         videos: form.videos,
       });
       const wasNew = !form.id;
@@ -2045,8 +2261,9 @@ function renderMaterials(panel, action, materials, reload, data = {}) {
                     class: 'btn small danger',
                     type: 'button',
                     text: '刪除',
+                    'data-testid': `delete-material-${m.id}`,
                     onclick: async () => {
-                      if (!confirm(`確定刪除「${m.title || '未命名素材'}」？照片與上傳的影片也會一併刪除。`)) return;
+                      if (!(await confirmDialog(`確定刪除「${m.title || '未命名素材'}」？照片與上傳的影片也會一併刪除。`, { title: '刪除素材', testid: 'delete-material-dialog' }))) return;
                       try {
                         await api.call('materials.delete', { actionId: action.id, id: m.id });
                         setStatus('已刪除');
@@ -2211,6 +2428,7 @@ function renderGenerate(panel, action, materials) {
   const planBox = unitOptions.length > 1 ? h('fieldset', { class: 'field plan-box', 'data-testid': 'plan-box' }, h('legend', { class: 'label', text: 'A4 頁面安排' }), planMode, planRows, planWarn) : null;
   const err = h('p', { class: 'errors', role: 'alert', 'data-testid': 'report-error' });
   const stats = h('p', { class: 'report-stats', 'data-testid': 'report-stats' });
+  const wordHint = h('p', { class: 'hint warning', 'data-testid': 'word-count-hint', hidden: true });
   const frame = h('iframe', { class: 'preview-frame', title: '報導預覽', sandbox: '', 'data-testid': 'report-preview' });
   const a4Info = h('p', { class: 'report-stats', 'data-testid': 'a4-stats' });
   const a4Pages = h('div', { class: 'a4-pages', 'data-testid': 'a4-pages' });
@@ -2238,6 +2456,7 @@ function renderGenerate(panel, action, materials) {
     results = { web: null, a4: null };
     frame.removeAttribute('srcdoc');
     stats.textContent = '';
+    wordHint.hidden = true;
     a4Info.textContent = '';
     fill(a4Pages);
     publicLink.hidden = true;
@@ -2264,6 +2483,7 @@ function renderGenerate(panel, action, materials) {
   };
   tabWeb.addEventListener('click', () => setMode('web'));
   tabA4.addEventListener('click', () => setMode('a4'));
+  applyRegenSettings(settings, action);
 
   const selected = () => {
     const ids = [...picks.querySelectorAll('input[name=use-material]:checked')].map((i) => i.value);
@@ -2288,16 +2508,28 @@ function renderGenerate(panel, action, materials) {
 
   async function generateWeb() {
     const s = settings.get();
+    const chosen = selected();
+    const allVideos = [];
+    chosen.forEach((m) => {
+      (m.videos || []).forEach((v, i) => allVideos.push({ materialId: m.id, materialTitle: m.title || '未命名素材', video: v, key: `${m.id}:${i}` }));
+    });
+    let videoKeep = null;
+    if (allVideos.length > s.maxVideos) {
+      videoKeep = await askPickVideos(allVideos, s.maxVideos);
+      if (!videoKeep) { setStatus('已取消生成'); return; }
+    }
     setStatus('生成網頁報導中…');
-    const comp = await composeReport({ action, materials: selected(), settings: s, summarizer: summarizer() });
+    const comp = await composeReport({ action, materials: chosen, settings: s, summarizer: summarizer(), videoKeep });
     const html = renderStandalone({ slug: '', data: comp.data, body: blocksToMarkdown(comp.blocks) }, { md, css: await getCss(), images: await imagesFor(comp), layout: s.layout });
+    const omittedVideos = allVideos.length - comp.stats.videos;
+    const omittedText = omittedVideos > 0 ? `・已省略 ${omittedVideos} 支影片` : '';
     results.web = {
       html,
       comp,
       settings: s,
       outputId: results.web?.outputId || null,
       publicId: results.web?.publicId || null,
-      statsText: `字數 ${comp.stats.chars}（目標 ${comp.stats.target}）・照片 ${comp.stats.photos} 張（上限 ${comp.stats.maxPhotos}）・影片 ${comp.stats.videos} 部（上限 ${comp.stats.maxVideos}）`,
+      statsText: `字數 ${comp.stats.chars}（目標 ${comp.stats.target}）・照片 ${comp.stats.photos} 張（上限 ${comp.stats.maxPhotos}）・影片 ${comp.stats.videos} 部（上限 ${comp.stats.maxVideos}）${omittedText}`,
     };
     frame.srcdoc = html;
     const st = comp.stats;
@@ -2305,6 +2537,12 @@ function renderGenerate(panel, action, materials) {
     stats.dataset.photos = String(st.photos);
     stats.dataset.videos = String(st.videos);
     stats.textContent = results.web.statsText;
+    if (st.target > 0 && st.chars < st.target / 2) {
+      wordHint.textContent = `目標字數是上限，不會自動補寫；目前素材只有 ${st.chars} 字，可再補素材。`;
+      wordHint.hidden = false;
+    } else {
+      wordHint.hidden = true;
+    }
     showPublicLink(results.web.publicId);
     setStatus('已生成網頁報導，可預覽、下載、存回後端或發佈到網站');
   }
@@ -2459,10 +2697,17 @@ function renderGenerate(panel, action, materials) {
         type: 'button',
         'data-testid': 'download-html',
         text: '下載單一 HTML',
-        onclick: guard(async () => {
-          if (!results.web) await generateWeb();
+        onclick: () => {
+          err.textContent = '';
+          if (!results.web) {
+            guard(async () => {
+              await generateWeb();
+              download(new Blob([results.web.html], { type: 'text/html;charset=utf-8' }), `${fileBase()}.html`);
+            })();
+            return;
+          }
           download(new Blob([results.web.html], { type: 'text/html;charset=utf-8' }), `${fileBase()}.html`);
-        }),
+        },
       }),
       h('button', {
         class: 'btn',
@@ -2495,6 +2740,7 @@ function renderGenerate(panel, action, materials) {
       publicLink,
     ),
     stats,
+    wordHint,
     frame,
   );
   fill(
@@ -2552,17 +2798,16 @@ function renderGenerate(panel, action, materials) {
   );
   fill(
     panel,
-    h('section', { class: 'panel' }, h('h2', { text: '報導設定' }), settings.el, field('文字節錄方式', sumSelect), picks),
+    h('section', { class: 'panel', 'data-testid': 'generate-form' }, h('h2', { text: '報導設定' }), settings.el, field('文字節錄方式', sumSelect), picks),
     tabs,
     webPanel,
     a4Panel,
     err,
     h('section', { class: 'panel' }, h('h2', { text: '產出紀錄' }), outputsBox),
   );
-  refreshOutputs().catch((e) => {
-    err.textContent = errorText(e);
-  });
+  // 產出紀錄在「產出」頁籤載入；這裡只在存回後更新，避免切換頁籤多打一次後端。
 }
+
 
 // ---------- 產出紀錄 ----------
 async function renderOutputs(panel, action) {
@@ -2577,24 +2822,30 @@ async function renderOutputs(panel, action) {
             h(
               'table',
               { class: 'table', 'data-testid': 'outputs-table' },
-              h('thead', {}, h('tr', {}, ['時間', '類型', '標題', '設定', '字數', '照片', '建立者', '公開'].map((t) => h('th', { text: t })))),
+              h('thead', {}, h('tr', {}, ['時間', '類型', '標題', '設定', '字數', '照片', '建立者', '公開', '操作'].map((t) => h('th', { text: t })))),
               h(
                 'tbody',
                 {},
-                list.map((o) =>
-                  h(
+                list.map((o) => {
+                  const kindLabel = o.kind === 'a4' ? `A4（${o.format || ''}${o.pageIndex != null ? `・第 ${o.pageIndex + 1} 頁` : ''}）` : '網頁';
+                  return h(
                     'tr',
                     {},
                     h('td', { text: taipeiTime(o.createdAt) }),
-                    h('td', { text: o.kind === 'a4' ? `A4（${o.format || ''}）` : '網頁' }),
+                    h('td', { text: kindLabel }),
                     h('td', { text: o.title }),
                     h('td', { text: `${(o.settings || {}).words || 0}字／${(o.settings || {}).maxPhotos || 0}圖／${(o.settings || {}).pages || 0}頁／${layoutNames[(o.settings || {}).layout] || ''}` }),
                     h('td', { text: String(o.chars) }),
                     h('td', { text: String(o.photos) }),
                     h('td', { text: o.createdBy }),
                     h('td', {}, o.published && o.publicId ? h('a', { href: publicReportUrl(o.publicId), target: '_blank', rel: 'noopener', text: '公開連結' }) : h('span', { text: '—' })),
-                  ),
-                ),
+                    h('td', { class: 'output-actions' },
+                      h('button', { type: 'button', class: 'btn small', text: '查看', 'data-testid': `outputs-view-${o.id}`, onclick: async () => { try { await viewOutput(action, o); } catch (e) { setStatus('無法查看：' + errorText(e)); } } }),
+                      h('button', { type: 'button', class: 'btn small', text: '下載', 'data-testid': `outputs-download-${o.id}`, onclick: async () => { try { await downloadOutput(action, o); setStatus('已開始下載'); } catch (e) { setStatus('無法下載：' + errorText(e)); } } }),
+                      h('button', { type: 'button', class: 'btn small', text: '以此設定重新生成', 'data-testid': `outputs-regen-${o.id}`, onclick: () => { sessionStorage.setItem('regen-settings:' + action.id, JSON.stringify(o.settings || {})); location.hash = `#/a/${action.id}/generate`; } }),
+                    ),
+                  );
+                }),
               ),
             ),
           )

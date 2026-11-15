@@ -2,8 +2,8 @@
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=23e087298e';
-import { LOGO_DATA_URL } from '../brand.mjs?v=23e087298e';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=f3b8c882d4';
+import { LOGO_DATA_URL } from '../brand.mjs?v=f3b8c882d4';
 
 let logoPromise = null;
 /** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
@@ -175,7 +175,7 @@ function photoIdsOf(comp) {
  * 把一份內容塞進 target 頁：先試各種字級縮放，塞不下就減字數、再減照片；最後手段只留前 target 頁並註明。
  * 回傳 { pages, comp, scale, truncated, words, lastResort }
  */
-async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize }) {
+async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize, startPage = 0 }) {
   let truncated = false;
   let last = null;
   for (let attempt = 0; attempt < 14; attempt++) {
@@ -184,7 +184,7 @@ async function fitPages({ compose, words, maxPhotos, target, header, layout, met
     const comp = { ...raw, blocks: raw.blocks.filter((b) => b.type !== 'video') };
     await ensureImages(comp);
     for (const scale of SCALES) {
-      const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header });
+      const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header, startPage });
       last = { res, comp, scale };
       if (res.pages.length <= target) return { pages: res.pages, comp, scale, truncated, words, lastResort: false };
     }
@@ -263,6 +263,7 @@ export async function renderA4Plan(opts) {
         maxPhotos,
         target: 1,
         header,
+        startPage: i,
         layout: settings.layout,
         metaLine: opts.metaLine,
         ensureImages,

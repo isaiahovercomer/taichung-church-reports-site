@@ -869,6 +869,12 @@ img {
   flex-wrap: wrap;
 }
 
+a.btn {
+  color: var(--ink);
+  text-decoration: none;
+  display: inline-block;
+}
+
 .btn {
   font: inherit;
   font-size: 14px;
@@ -878,6 +884,8 @@ img {
   border-radius: 999px;
   padding: 9px 18px;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
 }
 
 .btn.small {
@@ -1138,6 +1146,17 @@ img {
 
 .field input[type="date"] {
   min-width: 0;
+}
+.field input[type="date"]::-webkit-calendar-picker-indicator {
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+}
+.date-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted, #666);
 }
 
 /* 手機：輸入框字級至少 16px，iOS Safari 才不會在點選時自動放大畫面 */
@@ -1464,6 +1483,89 @@ progress {
 .a4-page figcaption {
   margin-top: 8px;
   text-align: center;
+}
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+dialog.dialog,
+.dialog {
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 560px;
+  width: calc(100% - 32px);
+  max-height: 85vh;
+  overflow: auto;
+}
+
+dialog.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.dialog-message {
+  white-space: pre-wrap;
+  margin: 0 0 12px;
+}
+
+.dialog-input {
+  width: 100%;
+}
+
+.video-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.video-pick-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.hint.warning {
+  color: #7a5b00;
+  background: #fff3c4;
+  border: 1px solid #e6c200;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 8px;
+}
+
+.output-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.output-preview {
+  max-width: 100%;
+  max-height: 65vh;
+}
+
+.output-preview-frame {
+  width: 100%;
+  height: 65vh;
+  border: 1px solid var(--line);
 }
 
 .table {

@@ -1,11 +1,46 @@
 // API 介面：同一組 call(action, data) 可切換三種後端
 //   remote：site.config.json 的 apiUrl（Apps Script /exec）
 //   mock  ：?mock=1 → site.config.json 的 mockApiUrl（scripts/mock-server.mjs）
-//   demo  ：?demo=1，或 apiUrl 為空（尚未部署後端）時自動 → 在瀏覽器裡直接執行 apps-script/core.js＋記憶體儲存（重新整理就清空）
+//   demo  ：?demo=1，或 apiUrl 為空（尚未部署後端）時自動 → 在瀏覽器裡直接執行 apps-script/core.js＋記憶體儲存（sessionStorage，關閉分頁才清除）
 // POST 一律用 Content-Type: text/plain（Apps Script 不支援 CORS 預檢），token 放在 body 裡。
 // localStorage 只存 session token（rpt.session.<mode>）；草稿文字由 main.mjs 另外存。
 
-import { createMemoryEnv } from '../backend/memory-env.mjs?v=23e087298e';
+import { createMemoryEnv } from '../backend/memory-env.mjs?v=f3b8c882d4';
+
+const DEMO_STATE_KEY = 'tcch-demo-state-v1';
+let demoPersistFailed = false;
+function loadDemoState() {
+  try {
+    if (typeof sessionStorage === 'undefined') return undefined;
+    const raw = sessionStorage.getItem(DEMO_STATE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function demoHasData(env) {
+  const s = env.exportState();
+  return Object.keys(s.actions || {}).length > 0 || Object.keys(s.materials || {}).length > 0;
+}
+function saveDemoState(env) {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    sessionStorage.setItem(DEMO_STATE_KEY, JSON.stringify(env.exportState()));
+    demoPersistFailed = false;
+  } catch (err) {
+    if (err && err.name === 'QuotaExceededError') {
+      demoPersistFailed = true;
+      if (typeof document !== 'undefined') {
+        const badge = document.querySelector('[data-testid="mode-badge"]');
+        if (badge && !badge.textContent.includes('示範資料太多')) {
+          badge.textContent += '；示範資料太多，重新整理可能無法完整還原';
+        }
+      }
+    }
+  }
+}
 
 export class ApiError extends Error {
   constructor(code, message) {
@@ -44,9 +79,18 @@ export function createApi({ mode, config, onDemoMail }) {
   if (mode === 'demo') {
     demo = createMemoryEnv({
       // 示範帳號是一般使用者（不是總管理者）：展示「任何人登入後都能建立自己的行動」
+      state: loadDemoState(),
+      onChange: () => saveDemoState(demo),
       deployer: '',
       sendMail: (to, subject, body) => onDemoMail && onDemoMail(to, (/(\d{6})/.exec(body) || [])[1]),
     });
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', (e) => {
+        if (!demoPersistFailed || !demoHasData(demo)) return;
+        e.preventDefault();
+        e.returnValue = '';
+      });
+    }
   }
 
   const url = mode === 'mock' ? config.mockApiUrl : config.apiUrl;

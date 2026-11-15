@@ -18,6 +18,22 @@ const BOTTOM = A4.height - 130;
 
 export const font = (size, weight = 400) => `${weight} ${Math.round(size)}px ${FONT_FAMILY}`;
 
+/** 圖說用小字，明顯小於內文（約 27px）與標題，避免被看成小標。 */
+export const captionSize = (s = 1) => 16 * s;
+export const captionLineHeight = (s = 1) => 16 * s * 1.4;
+export const captionGap = (s = 1) => 8 * s;
+export function trimCaption(text) {
+  return String(text ?? '').trim();
+}
+export function wrapCaption(text, width, s, measure) {
+  const cap = trimCaption(text);
+  if (!cap || width <= 0) return [];
+  return wrapText(cap, font(captionSize(s)), width, measure);
+}
+export function captionBlockHeight(lines, s) {
+  return lines.length ? lines.length * captionLineHeight(s) : 0;
+}
+
 
 const NO_LINE_START = '，。、；：！？）」』】》〉,.;:!?)」”’…';
 const TOKEN_RE = /[A-Za-z0-9@#$%&*+=/:._~'"\-]+\s*|\s+|[\s\S]/gu;
@@ -64,6 +80,7 @@ export const LAYOUTS = [
   { id: 'card', name: '上圖下文卡片', desc: '每張照片連圖說裝進一張淺色卡片，段落接在卡片之後。' },
   { id: 'sidebar', name: '左側邊欄', desc: '左側邊欄列出本期要目，主文在右側繞排。' },
   { id: 'fullbleed', name: '全版滿版照片', desc: '第一頁照片滿版、標題白字疊印在照片上，內文從第二頁開始。' },
+  { id: 'spread', name: '左右對開', desc: '第 1 頁左圖右文，第 2 頁起左右互換，像翻開的書冊，適合圖文並重的報導。' },
 ];
 
 
@@ -83,6 +100,7 @@ const LAYOUT_SPECS = {
   card: { columns: 1, photo: 'card', photoW: 1, cover: 'normal', titleScale: 1, headerCover: false },
   sidebar: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, sidebar: true, headerCover: false },
   fullbleed: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'fullbleed', titleScale: 1.1, headerCover: true },
+  spread: { columns: 1, photo: 'pane', photoW: 0.5, cover: 'normal', titleScale: 0.9, headerCover: true, spread: true },
 };
 
 /** 可選版型以 LAYOUTS 為準。後端清單只用來忽略前端尚不認識的 id，不會因舊版只有三種而縮減選項。 */
@@ -102,7 +120,7 @@ function usesHeaderCover(spec) {
 function insertInlineCover(list, cover, spec) {
   if (!cover || !cover.photoId) return;
   if (list.some((b) => b.type === 'figure' && b.photoId === cover.photoId)) return;
-  const fig = { type: 'figure', photoId: cover.photoId, caption: cover.caption || '' };
+  const fig = { type: 'figure', photoId: cover.photoId, caption: trimCaption(cover.caption) };
   const afterPara = spec.photo === 'banner' || spec.photo === 'grid';
   const i = list.findIndex((b) => b.type === 'para');
   if (i >= 0) list.splice(afterPara ? i + 1 : i, 0, fig);
@@ -123,10 +141,24 @@ function sizeOf(imageSize, id) {
 function nextId(st, type) { st.seq = (st.seq || 0) + 1; return 'p' + st.pageIndex + '-' + type + '-' + st.seq; }
 
 
-function geometryFor(spec, top) {
+function spreadPane(pageIndex) {
+  const gap = 36;
+  const paneW = (A4.width - 2 * MARGIN - gap) / 2;
+  const photoLeft = pageIndex % 2 === 0;
+  const photoX = photoLeft ? MARGIN : MARGIN + paneW + gap;
+  const textX = photoLeft ? MARGIN + paneW + gap : MARGIN;
+  return { gap, paneW, photoLeft, photoX, textX };
+}
+
+function geometryFor(spec, top, pageIndex = 0, opts = {}) {
   let mainX = MARGIN;
   let mainW = A4.width - 2 * MARGIN;
   let railX = null;
+  if (spec.spread && opts.hasPhoto !== false) {
+    const g = spreadPane(pageIndex);
+    const cols = [{ x: g.textX, y: top, w: g.paneW, h: Math.max(0, BOTTOM - top) }];
+    return { mainX: g.textX, mainW: g.paneW, cols, colW: g.paneW, gap: g.gap, railX: null, photoX: g.photoX, photoW: g.paneW, photoLeft: g.photoLeft };
+  }
   if (spec.sidebar) { mainX = MARGIN + 240 + 36; mainW = A4.width - MARGIN - mainX; }
   else if (spec.timeline) { mainX = MARGIN + 36; mainW = A4.width - MARGIN - mainX; railX = MARGIN + 12; }
   const ncol = spec.columns || 1;
@@ -153,12 +185,21 @@ function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, i
     const lh = titleSize * 1.3;
     page.frames.push({ id: hid('title'), type: 'title', x: MARGIN, y: 1160, w: CW, h: lines.length * lh, locked: false });
     lines.forEach((ln, i) => { page.ops.push({ op: 'text', x: MARGIN, y: 1160 + i * lh + titleSize, text: ln, font: tf, color: '#ffffff' }); });
+    let bandY = 1160 + lines.length * lh;
     if (metaLine) {
       const mf = font(23 * s);
       const mlines = wrapText(metaLine, mf, CW, measure);
-      const my = 1160 + lines.length * lh + 20 * s;
+      const my = bandY + 20 * s;
       page.frames.push({ id: hid('meta'), type: 'meta', x: MARGIN, y: my, w: CW, h: mlines.length * 23 * s * 1.6, locked: false });
       mlines.forEach((ln, i) => { page.ops.push({ op: 'text', x: MARGIN, y: my + i * 23 * s * 1.6 + 23 * s, text: ln, font: mf, color: '#ffffff' }); });
+      bandY = my + mlines.length * 23 * s * 1.6;
+    }
+    const bleedCap = wrapCaption(cover.caption, CW, s, measure);
+    if (bleedCap.length) {
+      const cy = bandY + 16 * s;
+      const ch = captionBlockHeight(bleedCap, s);
+      page.frames.push({ id: hid('caption'), type: 'caption', x: MARGIN, y: cy, w: CW, h: ch, locked: false, photoId: cover.photoId, align: 'left' });
+      bleedCap.forEach((ln, i) => { page.ops.push({ op: 'text', x: MARGIN, y: cy + i * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: 'rgba(255,255,255,0.88)' }); });
     }
     return BOTTOM + 1;
   }
@@ -192,16 +233,15 @@ function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, i
     const h = spec.cover === 'hero' ? 900 * s : Math.min((CW * sz.h) / sz.w, 640 * s);
     page.frames.push({ id: hid('image'), type: 'image', x: MARGIN, y: y, w: CW, h: h, locked: false, photoId: cover.photoId, fit: 'cover' });
     page.ops.push({ op: 'image', photoId: cover.photoId, x: MARGIN, y: y, w: CW, h: h, fit: 'cover', radius: 8 });
-    y += h + 12 * s;
-    if (cover.caption) {
-      const cf = font(21 * s);
-      const clines = wrapText(cover.caption, cf, CW, measure);
-      if (clines.length) {
-        page.frames.push({ id: hid('caption'), type: 'caption', x: MARGIN, y: y, w: CW, h: clines.length * 21 * s * 1.5, locked: false, photoId: cover.photoId });
-        for (const ln of clines) { page.ops.push({ op: 'text', x: MARGIN + CW / 2, y: y + 21 * s, text: ln, font: cf, color: COLORS.gray, align: 'center' }); y += 21 * s * 1.5; }
-      }
+    y += h;
+    const clines = wrapCaption(cover.caption, CW, s, measure);
+    if (clines.length) {
+      y += captionGap(s);
+      const ch = captionBlockHeight(clines, s);
+      page.frames.push({ id: hid('caption'), type: 'caption', x: MARGIN, y: y, w: CW, h: ch, locked: false, photoId: cover.photoId, align: 'center' });
+      for (const ln of clines) { page.ops.push({ op: 'text', x: MARGIN + CW / 2, y: y + captionSize(s), text: ln, font: font(captionSize(s)), color: COLORS.gray, align: 'center' }); y += captionLineHeight(s); }
     }
-    y += 22 * s;
+    y += 16 * s;
   }
   return y;
 }
@@ -477,11 +517,10 @@ function placeFigure(st, b, idx) {
     if (h > maxH) { h = maxH; w = (h * sz.w) / sz.h; }
     ix = col.x + (colW - w) / 2; iy = st.y;
   }
-  const cf = font(21 * s);
-  const capW = isWrap ? w : (isCard ? colW - 32 * s : w);
-  const capLines = b.caption ? wrapText(b.caption, cf, capW, st.measure) : [];
-  const capH = capLines.length * 21 * s * 1.5;
-  const capSpace = capH ? capH + 10 * s : 0;
+  const capW = w;
+  const capLines = wrapCaption(b.caption, capW, s, st.measure);
+  const capH = captionBlockHeight(capLines, s);
+  const capSpace = capH ? capH + captionGap(s) : 0;
   const cardExtra = isCard ? 48 * s : 0;
   const total = h + capSpace + cardExtra;
   const pad = 18 * s;
@@ -518,7 +557,7 @@ function placeFigure(st, b, idx) {
       else return 'pageFull';
     }
   }
-  const effTotal = h + (capH ? capH + 10 * s : 0) + (isCard ? 48 * s : 0);
+  const effTotal = h + capSpace + (isCard ? 48 * s : 0);
   if (isCard) {
     st.page.ops.push({ op: 'rect', x: col.x, y: iy, w: colW, h: effTotal, fill: COLORS.paper });
   }
@@ -526,11 +565,16 @@ function placeFigure(st, b, idx) {
   st.page.frames.push(imgFrame);
   st.page.ops.push({ op: 'image', photoId: b.photoId, x: ix, y: iy, w: w, h: h, fit: imgFrame.fit, radius: 6 });
   if (capLines.length) {
-    const cy = iy + h + 10 * s;
-    st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: isWrap ? ix : col.x, y: cy, w: isWrap ? w : colW, h: capH, locked: false, photoId: b.photoId, blockIndex: idx });
-    for (let i = 0; i < capLines.length; i++) {
-      if (isWrap) st.page.ops.push({ op: 'text', x: ix, y: cy + i * 21 * s * 1.5 + 21 * s, text: capLines[i], font: cf, color: COLORS.gray });
-      else st.page.ops.push({ op: 'text', x: col.x + colW / 2, y: cy + i * 21 * s * 1.5 + 21 * s, text: capLines[i], font: cf, color: COLORS.gray, align: 'center' });
+    const cy = iy + h + captionGap(s);
+    if (cy + capH <= BOTTOM + 0.5) {
+      const capAlign = isWrap ? 'left' : 'center';
+      st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: ix, y: cy, w: w, h: capH, locked: false, photoId: b.photoId, blockIndex: idx, align: capAlign });
+      const lh = captionLineHeight(s);
+      const cf = font(captionSize(s));
+      for (let i = 0; i < capLines.length; i++) {
+        const tx = capAlign === 'left' ? ix : ix + w / 2;
+        st.page.ops.push({ op: 'text', x: tx, y: cy + i * lh + captionSize(s), text: capLines[i], font: cf, color: COLORS.gray, align: capAlign });
+      }
     }
   }
   const wrapPad = 16 * s;
@@ -555,18 +599,17 @@ function placeFigurePair(st, b1, b2, idx1, idx2) {
   const w = (col.w - gap) / 2;
   const sz1 = sizeOf(st.imageSize, b1.photoId);
   const sz2 = sizeOf(st.imageSize, b2.photoId);
-  let h1 = Math.min((w * sz1.h) / sz1.w, 380 * s);
-  let h2 = Math.min((w * sz2.h) / sz2.w, 380 * s);
-  const cf = font(21 * s);
-  const c1 = b1.caption ? wrapText(b1.caption, cf, w, st.measure) : [];
-  const c2 = b2.caption ? wrapText(b2.caption, cf, w, st.measure) : [];
-  const ch1 = c1.length * 21 * s * 1.5;
-  const ch2 = c2.length * 21 * s * 1.5;
-  let rowH = Math.max(h1 + (ch1 ? ch1 + 10 * s : 0), h2 + (ch2 ? ch2 + 10 * s : 0));
+  // 兩張等高，圖說才能對齊在同一列，不會一高一低看起來亂放
+  let h = Math.min(Math.max((w * sz1.h) / sz1.w, (w * sz2.h) / sz2.w), 380 * s);
+  const c1 = wrapCaption(b1.caption, w, s, st.measure);
+  const c2 = wrapCaption(b2.caption, w, s, st.measure);
+  const ch1 = captionBlockHeight(c1, s);
+  const ch2 = captionBlockHeight(c2, s);
+  const capMax = Math.max(ch1, ch2);
+  const capPair = capMax ? capMax + captionGap(s) : 0;
+  let rowH = h + capPair;
   const pad = 18 * s;
   let y0 = st.y;
-  const capMax = Math.max(ch1, ch2);
-  const capPair = capMax ? capMax + 10 * s : 0;
   const minRow = 180 * s + capPair;
   if (y0 + rowH + pad > BOTTOM) {
     if (BOTTOM - y0 - pad < minRow && !atTop(st)) {
@@ -576,19 +619,21 @@ function placeFigurePair(st, b1, b2, idx1, idx2) {
     if (y0 + rowH + pad > BOTTOM) {
       const room = BOTTOM - y0 - pad - capPair;
       if (room < 80 * s) return 'pageFull';
-      h1 = room; h2 = room;
-      rowH = h1 + capPair;
+      h = room;
+      rowH = h + capPair;
     }
   }
-  const items = [[b1, idx1, col.x, h1, c1], [b2, idx2, col.x + w + gap, h2, c2]];
+  const items = [[b1, idx1, col.x, c1], [b2, idx2, col.x + w + gap, c2]];
+  const cy = y0 + h + captionGap(s);
+  const lh = captionLineHeight(s);
+  const cf = font(captionSize(s));
   for (const it of items) {
-    const bb = it[0]; const bi = it[1]; const xx = it[2]; const hh = it[3]; const caps = it[4];
-    st.page.frames.push({ id: nextId(st, 'image'), type: 'image', x: xx, y: y0, w: w, h: hh, locked: false, photoId: bb.photoId, fit: 'cover', blockIndex: bi });
-    st.page.ops.push({ op: 'image', photoId: bb.photoId, x: xx, y: y0, w: w, h: hh, fit: 'cover', radius: 6 });
-    if (caps.length) {
-      const cy = y0 + hh + 10 * s;
-      st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: xx, y: cy, w: w, h: caps.length * 21 * s * 1.5, locked: false, photoId: bb.photoId, blockIndex: bi });
-      for (let i = 0; i < caps.length; i++) st.page.ops.push({ op: 'text', x: xx, y: cy + i * 21 * s * 1.5 + 21 * s, text: caps[i], font: cf, color: COLORS.gray });
+    const bb = it[0]; const bi = it[1]; const xx = it[2]; const caps = it[3];
+    st.page.frames.push({ id: nextId(st, 'image'), type: 'image', x: xx, y: y0, w: w, h: h, locked: false, photoId: bb.photoId, fit: 'cover', blockIndex: bi });
+    st.page.ops.push({ op: 'image', photoId: bb.photoId, x: xx, y: y0, w: w, h: h, fit: 'cover', radius: 6 });
+    if (caps.length && cy + captionBlockHeight(caps, s) <= BOTTOM + 0.5) {
+      st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: xx, y: cy, w: w, h: captionBlockHeight(caps, s), locked: false, photoId: bb.photoId, blockIndex: bi, align: 'left' });
+      for (let i = 0; i < caps.length; i++) st.page.ops.push({ op: 'text', x: xx, y: cy + i * lh + captionSize(s), text: caps[i], font: cf, color: COLORS.gray });
     }
   }
   st.obstacles.push({ x: col.x, y: y0, w: col.w, h: rowH });
@@ -640,13 +685,186 @@ function flowOnePage(st, blocks, startIdx) {
 /**
  * header：false 時是接續頁（A4 自訂每頁內容的第 2 頁以後）：不畫大標題、meta 與主圖，從頁面上方直接排內文
  */
-export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true }) {
+function collectSpreadPhotos(cover, list) {
+  const photos = [];
+  const seen = new Set();
+  const add = (photoId, caption, blockIndex) => {
+    if (!photoId || seen.has(photoId)) return;
+    seen.add(photoId);
+    photos.push({ photoId, caption: trimCaption(caption), blockIndex });
+  };
+  if (cover && cover.photoId) add(cover.photoId, cover.caption, null);
+  list.forEach((b, i) => { if (b && b.type === 'figure') add(b.photoId, b.caption, i); });
+  return photos;
+}
+
+function drawSpreadHeader(page, data, metaLine, geom, s, measure, pageIndex, spec) {
+  const x = geom.textX;
+  const CW = geom.paneW;
+  let n = 0;
+  const hid = (t) => 'p' + pageIndex + '-' + t + '-' + (++n);
+  let y = TOP_FIRST;
+  if (data.kicker) {
+    const f = font(24 * s, 700);
+    page.frames.push({ id: hid('kicker'), type: 'meta', x, y, w: CW, h: 24 * s + 18 * s, locked: false });
+    page.ops.push({ op: 'text', x, y: y + 24 * s, text: data.kicker, font: f, color: COLORS.gold });
+    y += 24 * s + 18 * s;
+  }
+  const titleSize = 48 * s * (spec.titleScale || 1);
+  const tf = font(titleSize, 900);
+  const tlines = data.title ? wrapText(data.title, tf, CW, measure) : [];
+  const tlh = titleSize * 1.35;
+  if (tlines.length) {
+    page.frames.push({ id: hid('title'), type: 'title', x, y, w: CW, h: tlines.length * tlh, locked: false });
+    for (const ln of tlines) { page.ops.push({ op: 'text', x, y: y + titleSize, text: ln, font: tf, color: COLORS.navy }); y += tlh; }
+  }
+  y += 10 * s;
+  const mf = font(23 * s);
+  const mlines = wrapText(metaLine || '', mf, CW, measure);
+  if (mlines.length) {
+    page.frames.push({ id: hid('meta'), type: 'meta', x, y, w: CW, h: mlines.length * 23 * s * 1.6, locked: false });
+    for (const ln of mlines) { page.ops.push({ op: 'text', x, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray }); y += 23 * s * 1.6; }
+  }
+  y += 14 * s;
+  page.ops.push({ op: 'line', x1: x, y1: y, x2: x + CW, y2: y, color: COLORS.line, width: 2 });
+  y += 24 * s;
+  return y;
+}
+
+function placeSpreadPhoto(page, photo, geom, s, measure, pageIndex) {
+  if (!photo) return;
+  const w = geom.paneW;
+  const xx = geom.photoX;
+  const iy = MARGIN;
+  const capLines = wrapCaption(photo.caption, w, s, measure);
+  const capH = captionBlockHeight(capLines, s);
+  const capSpace = capH ? capH + captionGap(s) : 0;
+  const h = Math.max(80 * s, BOTTOM - iy - capSpace);
+  let n = page.frames.length;
+  const hid = (t) => 'p' + pageIndex + '-' + t + '-' + (++n);
+  page.frames.push({ id: hid('image'), type: 'image', x: xx, y: iy, w, h, locked: false, photoId: photo.photoId, fit: 'cover', blockIndex: photo.blockIndex });
+  page.ops.push({ op: 'image', photoId: photo.photoId, x: xx, y: iy, w, h, fit: 'cover', radius: 8 });
+  if (capLines.length) {
+    const cy = iy + h + captionGap(s);
+    if (cy + capH <= BOTTOM + 0.5) {
+      page.frames.push({ id: hid('caption'), type: 'caption', x: xx, y: cy, w, h: capH, locked: false, photoId: photo.photoId, blockIndex: photo.blockIndex, align: 'left' });
+      const lh = captionLineHeight(s);
+      const cf = font(captionSize(s));
+      capLines.forEach((ln, i) => { page.ops.push({ op: 'text', x: xx, y: cy + i * lh + captionSize(s), text: ln, font: cf, color: COLORS.gray, align: 'left' }); });
+    }
+  }
+}
+
+function placeSpreadPhotoTail(pages, photos, s, measure, startPage) {
+  const gap = 24;
+  const w = (A4.width - 2 * MARGIN - gap) / 2;
+  let i = 0;
+  let pageIndex = pages.length;
+  while (i < photos.length) {
+    const page = { index: pageIndex, frames: [], ops: [] };
+    let y = TOP_OTHER;
+    let placed = 0;
+    while (i < photos.length) {
+      const a = photos[i];
+      const b = photos[i + 1] || null;
+      const capA = wrapCaption(a.caption, b ? w : A4.width - 2 * MARGIN, s, measure);
+      const capB = b ? wrapCaption(b.caption, w, s, measure) : [];
+      const capMax = Math.max(captionBlockHeight(capA, s), captionBlockHeight(capB, s));
+      const capPair = capMax ? capMax + captionGap(s) : 0;
+      const h = Math.min(420 * s, BOTTOM - y - capPair - 18 * s);
+      if (h < 160 * s && placed) break;
+      if (h < 80 * s) break;
+      const rowH = h + capPair;
+      if (b) {
+        const items = [[a, capA, MARGIN], [b, capB, MARGIN + w + gap]];
+        const cy = y + h + captionGap(s);
+        for (const it of items) {
+          const photo = it[0]; const caps = it[1]; const xx = it[2];
+          page.frames.push({ id: 'p' + pageIndex + '-image-' + (++placed), type: 'image', x: xx, y, w, h, locked: false, photoId: photo.photoId, fit: 'cover', blockIndex: photo.blockIndex });
+          page.ops.push({ op: 'image', photoId: photo.photoId, x: xx, y, w, h, fit: 'cover', radius: 8 });
+          if (caps.length && cy + captionBlockHeight(caps, s) <= BOTTOM + 0.5) {
+            page.frames.push({ id: 'p' + pageIndex + '-caption-' + placed, type: 'caption', x: xx, y: cy, w, h: captionBlockHeight(caps, s), locked: false, photoId: photo.photoId, blockIndex: photo.blockIndex, align: 'left' });
+            caps.forEach((ln, n) => { page.ops.push({ op: 'text', x: xx, y: cy + n * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: COLORS.gray, align: 'left' }); });
+          }
+        }
+        i += 2;
+      } else {
+        const ww = A4.width - 2 * MARGIN;
+        const cy = y + h + captionGap(s);
+        page.frames.push({ id: 'p' + pageIndex + '-image-' + (++placed), type: 'image', x: MARGIN, y, w: ww, h, locked: false, photoId: a.photoId, fit: 'cover', blockIndex: a.blockIndex });
+        page.ops.push({ op: 'image', photoId: a.photoId, x: MARGIN, y, w: ww, h, fit: 'cover', radius: 8 });
+        if (capA.length && cy + captionBlockHeight(capA, s) <= BOTTOM + 0.5) {
+          page.frames.push({ id: 'p' + pageIndex + '-caption-' + placed, type: 'caption', x: MARGIN, y: cy, w: ww, h: captionBlockHeight(capA, s), locked: false, photoId: a.photoId, blockIndex: a.blockIndex, align: 'left' });
+          capA.forEach((ln, n) => { page.ops.push({ op: 'text', x: MARGIN, y: cy + n * captionLineHeight(s) + captionSize(s), text: ln, font: font(captionSize(s)), color: COLORS.gray, align: 'left' }); });
+        }
+        i += 1;
+      }
+      y += rowH + 18 * s;
+    }
+    if (!placed) break;
+    pages.push(page);
+    pageIndex++;
+  }
+}
+
+function layoutSpread({ data, metaLine, cover, blocks, scale, measure, imageSize, header, startPage }) {
+  const s = scale || 1;
+  const spec = LAYOUT_SPECS.spread;
+  const list = (blocks || []).filter((b) => b && b.type !== 'figure' && b.type !== 'video' && String(b.text ?? '').trim()).map((b) => ({ ...b }));
+  const photos = collectSpreadPhotos(cover, blocks || []);
+  const bodySize = 27 * s * (spec.bodyScale || 1);
+  const bodyLH = bodySize * 1.8;
+  const bf = font(bodySize);
+  const pages = [];
+  let idx = 0;
+  let photoIdx = 0;
+  let pageIndex = 0;
+  const hasText = () => idx < list.length;
+  while (hasText() || pageIndex === 0) {
+    if (pageIndex > 200) break;
+    const isFirst = pageIndex === 0;
+    const absPage = (startPage || 0) + pageIndex;
+    const page = { index: pageIndex, frames: [], ops: [] };
+    pages.push(page);
+    const hasPhoto = photoIdx < photos.length && (hasText() || isFirst);
+    let yAfter;
+    let geom;
+    if (hasPhoto) {
+      const pane = spreadPane(absPage);
+      if (isFirst && header) yAfter = drawSpreadHeader(page, data, metaLine, pane, s, measure, pageIndex, spec);
+      else yAfter = TOP_OTHER;
+      geom = geometryFor(spec, yAfter, absPage, { hasPhoto: true });
+      placeSpreadPhoto(page, photos[photoIdx], pane, s, measure, pageIndex);
+      photoIdx++;
+    } else if (isFirst && header) {
+      yAfter = buildHeader(page, data, metaLine, null, spec, s, measure, imageSize, true, pageIndex);
+      geom = geometryFor(spec, yAfter, absPage, { hasPhoto: false });
+    } else {
+      yAfter = TOP_OTHER;
+      geom = geometryFor(spec, yAfter, absPage, { hasPhoto: false });
+    }
+    if (yAfter > BOTTOM) { pageIndex++; if (!hasText()) break; continue; }
+    const st = makeState(page, spec, geom.cols, { s, measure, imageSize, pageIndex, bodySize, bodyLH, bf });
+    const framesBefore = page.frames.length;
+    const roomy = BOTTOM - (geom.cols[0] ? geom.cols[0].y : TOP_OTHER) >= 200;
+    const nextIdx = flowOnePage(st, list, idx);
+    if (nextIdx > idx) idx = nextIdx;
+    else if (idx < list.length && page.frames.length === framesBefore && roomy) idx++;
+    pageIndex++;
+    if (!hasText()) break;
+  }
+  if (photoIdx < photos.length) placeSpreadPhotoTail(pages, photos.slice(photoIdx), s, measure, startPage);
+  return { pages };
+}
+
+export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true, startPage = 0 }) {
   const s = scale || 1;
   const spec = specFor(layout);
   const m = measure || fallbackMeasure;
   const imgSize = imageSize || (() => ({ w: 4, h: 3 }));
   const d = data || {};
   const list = Array.isArray(blocks) ? blocks.map((b) => ({ ...b })) : [];
+  if (spec.spread) return layoutSpread({ data: d, metaLine: metaLine || '', cover, blocks: list, scale: s, measure: m, imageSize: imgSize, header, startPage });
   const headerCover = usesHeaderCover(spec);
   if (header && !headerCover) insertInlineCover(list, cover, spec);
   const bodySize = (spec.columns === 3 ? 24 : 27) * s * (spec.bodyScale || 1);
@@ -746,17 +964,23 @@ export function reflowPage(page, frames, ctx) {
       lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * (isKicker ? 42 * s : 36 * s) + (isKicker ? 24 * s : 23 * s), text: ln, font: ff, color: isKicker ? COLORS.gold : COLORS.gray }); });
     } else if (f.type === 'caption') {
       let cap = '';
-      if (cover && cover.photoId === f.photoId) cap = cover.caption || '';
-      else { const fb = list.find((b) => b.photoId === f.photoId); if (fb) cap = fb.caption || ''; }
-      const cf = font(21 * s);
-      const lines = cap ? wrapText(cap, cf, f.w, m) : [];
-      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x + f.w / 2, y: f.y + i * 21 * s * 1.5 + 21 * s, text: ln, font: cf, color: COLORS.gray, align: 'center' }); });
+      if (cover && cover.photoId === f.photoId) cap = trimCaption(cover.caption);
+      if (!cap) {
+        const fb = blocksSrc.find((b) => b && b.photoId === f.photoId);
+        if (fb) cap = trimCaption(fb.caption);
+      }
+      const lines = wrapCaption(cap, f.w, s, m);
+      const align = f.align || 'center';
+      const cf = font(captionSize(s));
+      const lh = captionLineHeight(s);
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: align === 'left' ? f.x : f.x + f.w / 2, y: f.y + i * lh + captionSize(s), text: ln, font: cf, color: COLORS.gray, align }); });
     } else if (f.type === 'note') {
       newPage.ops.push({ op: 'rect', x: f.x, y: f.y, w: f.w, h: f.h, fill: COLORS.paper });
     }
   }
   if (top > BOTTOM || !list.length) return { page: newPage, overflow: [], pages: [newPage] };
-  const geom = geometryFor(spec, top);
+  const hasPhoto = fixed.some((f) => f.type === 'image');
+  const geom = geometryFor(spec, top, newPage.index, { hasPhoto });
   const bodySize = (spec.columns === 3 ? 24 : 27) * s * (spec.bodyScale || 1);
   const st = makeState(newPage, spec, geom.cols, { s, measure: m, imageSize: imgSize, pageIndex: newPage.index, bodySize, bodyLH: bodySize * 1.8, bf: font(bodySize), railX: geom.railX, seq: fixed.length });
   for (const f of fixed) {
