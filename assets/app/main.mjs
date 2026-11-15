@@ -6,21 +6,21 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=6afe119b22';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=6afe119b22';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=6afe119b22';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=6afe119b22';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=6afe119b22';
-import { mountA4Editor } from '../report/a4-editor.mjs?v=6afe119b22';
-import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=6afe119b22';
-import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=6afe119b22';
-import { buildPdf } from '../report/pdf.mjs?v=6afe119b22';
-import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=6afe119b22';
-import { createTour } from './tour.mjs?v=6afe119b22';
-import { helpView } from './help.mjs?v=6afe119b22';
-import { createPhotoLoader } from './photos.mjs?v=6afe119b22';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=6afe119b22';
-import { createSnapshot } from './snapshot.mjs?v=6afe119b22';
+import { ApiError, createApi, detectMode } from './api.mjs?v=f6c935fec3';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=f6c935fec3';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=f6c935fec3';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=f6c935fec3';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=f6c935fec3';
+import { mountA4Editor } from '../report/a4-editor.mjs?v=f6c935fec3';
+import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=f6c935fec3';
+import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=f6c935fec3';
+import { buildPdf } from '../report/pdf.mjs?v=f6c935fec3';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=f6c935fec3';
+import { createTour } from './tour.mjs?v=f6c935fec3';
+import { helpView } from './help.mjs?v=f6c935fec3';
+import { createPhotoLoader } from './photos.mjs?v=f6c935fec3';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=f6c935fec3';
+import { createSnapshot } from './snapshot.mjs?v=f6c935fec3';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 const THEME_KEY = 'rpt.report-theme';
@@ -190,7 +190,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=6afe119b22', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=f6c935fec3', import.meta.url))).text();
   return cssText;
 }
 
@@ -942,7 +942,7 @@ function settingsControls(initial) {
     maxPhotos: ['照片張數上限', (v) => `${v} 張`],
     maxVideos: ['影片數上限', (v) => `${v} 部`],
   };
-  const a4Labels = { pages: ['A4 頁數', (v) => `${v} 頁`] };
+  const a4Labels = { pages: ['A4 最多頁數', (v) => `${v} 頁`] };
   const makeRow = (store, key, label, fmt) => {
     const r = ranges[key];
     const out = h('output', { class: 'range-value', 'data-testid': `out-${key}` });
@@ -2670,7 +2670,9 @@ function renderGenerate(panel, action, materials) {
     const title = res.comp?.data?.title || res.comps?.[0]?.data?.title || action.name;
     const layoutPages = res.layoutPages;
     const pageCount = Array.isArray(layoutPages) ? layoutPages.length : res.pages;
-    const statsText = `A4 共 ${pageCount} 頁（設定 ${s.pages} 頁，1240×1754 px）${res.truncated ? '・篇幅超過，已再節錄並註明「全文見網頁版」' : ''}・字級縮放 ${Math.round(res.scale * 100)}%`;
+    const lastFill = res.lastFill != null ? res.lastFill : (layoutPages && layoutPages.length ? pageFillRatio(layoutPages[layoutPages.length - 1]) : 1);
+    const fillHint = pageCount > 1 && lastFill < 0.7 ? `・末頁留白較多，可改用 ${pageCount - 1} 頁` : '';
+    const statsText = `A4 實際產出 ${pageCount} 頁（最多 ${s.pages} 頁，1240×1754 px）${res.truncated ? '・篇幅超過，已再節錄並註明「全文見網頁版」' : ''}・本版型字級 ${Math.round(res.scale * 100)}%${fillHint}`;
     const pages = Array.isArray(layoutPages) && layoutPages.length
       ? layoutPages.map((p, i) => ({
           index: p.index != null ? p.index : i,
@@ -2751,7 +2753,7 @@ function renderGenerate(panel, action, materials) {
     const s = settings.get();
     setStatus('生成 A4 圖檔中…');
     const mats = selected();
-    const metaLine = [formatDateRange(action.date, action.endDate), action.place ? `地點：${action.place}` : '', `作者：${[...new Set(mats.map((m) => m.author).filter(Boolean))].join('、') || '行動報導小組'}`].filter(Boolean).join('　');
+    const metaLine = formatMetaLine({ dateText: formatDateRange(action.date, action.endDate), place: action.place, authors: mats.map((m) => m.author) });
     const loadImage = async (photoId) => loadImg(await photoDataUrl(action.id, photoId));
     let res;
     if (planBox && modeCustom.checked) {

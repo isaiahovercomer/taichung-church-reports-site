@@ -2,7 +2,7 @@
 // 再轉成 Markdown（給 render.mjs 生網頁）或交給 A4 排版（a4-layout.mjs）。
 // 純函式，不碰 DOM，Node 單元測試可直接 import。
 
-import { countChars } from './summarizer.mjs?v=6afe119b22';
+import { countChars } from './summarizer.mjs?v=f6c935fec3';
 
 /** 單一素材的照片順序：主圖 → 有圖說 → 其他（同級維持原順序） */
 export function orderPhotos(photos = []) {
@@ -140,13 +140,18 @@ export async function composeReport({ action, materials: input, settings, summar
     if (m.title) blocks.push({ type: 'heading', text: m.title, kind: m.kind, materialId: m.id });
     // 照片穿插在段落之間：第 1 段後、第 2 段後…，剩下的放在最後
     const queue = [...myPhotos];
-    sec.paragraphs.forEach((p) => {
-      blocks.push({ type: 'para', text: p, materialId: m.id });
+    sec.paragraphs.forEach((p, pi) => {
+      let text = p;
+      if (sec.truncated && pi === sec.paragraphs.length - 1 && text && !/……$/.test(text)) text += '……';
+      blocks.push({ type: 'para', text, materialId: m.id });
       const ph = queue.shift();
       if (ph) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
     });
     for (const ph of queue) blocks.push({ type: 'figure', photoId: ph.photoId, imageName: imageName(ph.photoId), caption: String(ph.caption || '').trim(), materialId: m.id });
-    if (m.kind === 'testimony' && m.author) blocks.push({ type: 'byline', text: `—— ${m.author}`, materialId: m.id });
+    if (m.author) {
+      const by = m.kind === 'testimony' ? `—— ${m.author}` : `文／${m.author}`;
+      blocks.push({ type: 'byline', text: by, materialId: m.id });
+    }
     for (const v of myVideos) {
       const url = safeHttpsUrl(v.url);
       if (!url) continue;

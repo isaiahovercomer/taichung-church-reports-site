@@ -1,10 +1,10 @@
-// A4 圖檔產生（瀏覽器）：用 a4-layout.mjs 排版、畫到 canvas，自動縮放字級／圖片以塞進指定頁數；
+// A4 圖檔產生（瀏覽器）：用 a4-layout.mjs 排版、畫到 canvas；頁數不夠時先縮照片、再節錄文字，最後才縮字（內文不低於 10.5pt）。
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=6afe119b22';
-import { LOGO_DATA_URL } from '../brand.mjs?v=6afe119b22';
-import { getTheme, drawPattern } from './themes.mjs?v=6afe119b22';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4, MIN_BODY_PX, BODY_PX, DEFAULT_FOCUS_X, DEFAULT_FOCUS_Y, pageFillRatio } from './a4-layout.mjs?v=f6c935fec3';
+import { LOGO_DATA_URL } from '../brand.mjs?v=f6c935fec3';
+import { getTheme, drawPattern } from './themes.mjs?v=f6c935fec3';
 
 
 function themePalette(theme) {
@@ -29,6 +29,12 @@ let logoImg = null;
 
 export const FULL_TEXT_NOTE = '（篇幅所限，以上為節錄，全文見網頁版）';
 const SCALES = [1, 0.93, 0.86, 0.8, 0.74, 0.68, 0.62];
+/** 內文最小 10.5pt；先縮照片、再節錄文字，最後才縮字。 */
+export function fontScaleSteps() {
+  const minS = MIN_BODY_PX / BODY_PX;
+  return [1, 0.93, 0.86, Math.max(minS, 0.81)].filter((v, i, a) => a.findIndex((x) => Math.abs(x - v) < 0.005) === i && v + 1e-6 >= minS);
+}
+
 
 let measureCtx = null;
 function measure(text, fnt) {
@@ -168,15 +174,15 @@ function attachFocus(pages) {
   for (const page of pages || []) {
     for (const f of page.frames || []) {
       if (f.type === 'image') {
-        if (f.focusX == null) f.focusX = 0.5;
-        if (f.focusY == null) f.focusY = 0.5;
+        if (f.focusX == null) f.focusX = DEFAULT_FOCUS_X;
+        if (f.focusY == null) f.focusY = DEFAULT_FOCUS_Y;
       }
     }
     for (const op of page.ops || []) {
       if (op.op === 'image') {
         const fr = (page.frames || []).find((f) => f.type === 'image' && f.photoId === op.photoId);
-        op.focusX = fr ? fr.focusX : (op.focusX != null ? op.focusX : 0.5);
-        op.focusY = fr ? fr.focusY : (op.focusY != null ? op.focusY : 0.5);
+        op.focusX = fr ? fr.focusX : (op.focusX != null ? op.focusX : DEFAULT_FOCUS_X);
+        op.focusY = fr ? fr.focusY : (op.focusY != null ? op.focusY : DEFAULT_FOCUS_Y);
       }
     }
   }
@@ -214,29 +220,45 @@ function photoIdsOf(comp) {
 }
 
 /**
- * 把一份內容塞進 target 頁：先試各種字級縮放，塞不下就減字數、再減照片；最後手段只留前 target 頁並註明。
+ * 把一份內容塞進 target 頁：先縮照片（仍保留至少 4 張）、再節錄文字、最後才縮字（不低於 10.5pt）；最後手段只留前 target 頁並註明。
  * 回傳 { pages, comp, scale, truncated, words, lastResort }
  */
 async function fitPages({ compose, words, maxPhotos, target, header, layout, metaLine, ensureImages, imageSize, startPage = 0, theme = null }) {
   let truncated = false;
   let last = null;
-  for (let attempt = 0; attempt < 14; attempt++) {
-    const raw = await compose({ words, maxPhotos, note: truncated ? FULL_TEXT_NOTE : null });
-    // 保險：就算 compose 沒帶 print，也不讓影片區塊進 A4
+  const tryOnce = async (scale, w, photos, note) => {
+    const raw = await compose({ words: w, maxPhotos: photos, note });
     const comp = { ...raw, blocks: raw.blocks.filter((b) => b.type !== 'video') };
     await ensureImages(comp);
-    for (const scale of SCALES) {
-      const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header, startPage, theme });
-      last = { res, comp, scale };
-      if (res.pages.length <= target) return { pages: res.pages, comp, scale, truncated, words, lastResort: false };
-    }
-    // 塞不下：先減字數，字數到底再減照片
-    truncated = true;
-    if (words > 150) words = Math.max(150, Math.floor(words * 0.75));
-    else if (maxPhotos > 1) maxPhotos = Math.max(1, Math.floor(maxPhotos / 2));
-    else break;
+    const res = layoutA4({ data: comp.data, metaLine, cover: comp.cover, blocks: comp.blocks, layout, scale, measure, imageSize, header, startPage, theme, targetPages: target });
+    last = { res, comp, scale, words: w };
+    return res.pages.length <= target;
+  };
+  // 1. 先用原字級、全部照片與文字
+  if (await tryOnce(1, words, maxPhotos, null)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words, lastResort: false };
+  // 2. 照片很多時先減張數，但至少保留 4 張，避免把一般報導的兩張主圖也砍掉
+  truncated = true;
+  let photos = maxPhotos;
+  while (photos > 4) {
+    photos = Math.max(4, Math.floor(photos * 0.7));
+    if (await tryOnce(1, words, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words, lastResort: false };
   }
-  return { pages: last.res.pages.slice(0, target), comp: last.comp, scale: last.scale, truncated: true, words, lastResort: true };
+  // 3. 再節錄文字
+  let w = words;
+  while (w > 150) {
+    w = Math.max(150, Math.floor(w * 0.75));
+    if (await tryOnce(1, w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
+  }
+  // 4. 最後才縮字，且不低於 10.5pt
+  for (const scale of fontScaleSteps().filter((s) => s < 0.999)) {
+    if (await tryOnce(scale, w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
+  }
+  // 5. 仍塞不下才再減到 4 張以下
+  while (photos > 1) {
+    photos = Math.max(1, photos - 1);
+    if (await tryOnce(fontScaleSteps().at(-1), w, photos, FULL_TEXT_NOTE)) return { pages: last.res.pages, comp: last.comp, scale: last.scale, truncated, words: w, lastResort: false };
+  }
+  return { pages: last.res.pages.slice(0, target), comp: last.comp, scale: last.scale, truncated: true, words: w, lastResort: true };
 }
 
 function stampNote(canvas) {
@@ -271,9 +293,16 @@ async function imageHelpers(loadImage) {
  * }
  * 回傳 { canvases, pages, truncated, scale, words, comp }
  */
+async function waitForFonts() {
+  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch { /* 字型載入失敗仍繼續，用後備字型量寬 */ }
+  }
+}
+
 export async function renderA4(opts) {
   const { settings } = opts;
   const theme = opts.theme || settings.theme || null;
+  await waitForFonts();
   const { images, ensureImages, imageSize } = await imageHelpers(opts.loadImage);
   const r = await fitPages({ compose: opts.compose, words: settings.words, maxPhotos: settings.maxPhotos, target: settings.pages, header: true, layout: settings.layout, metaLine: opts.metaLine, ensureImages, imageSize, theme });
   attachFocus(r.pages);
@@ -283,7 +312,8 @@ export async function renderA4(opts) {
     return c;
   });
   if (r.lastResort) stampNote(canvases[canvases.length - 1]);
-  return { canvases, pages: canvases.length, layoutPages: r.pages, images, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp, theme };
+  const lastFill = r.pages.length ? pageFillRatio(r.pages[r.pages.length - 1]) : 1;
+  return { canvases, pages: canvases.length, layoutPages: r.pages, images, truncated: r.truncated, scale: r.scale, words: r.words, comp: r.comp, theme, lastFill };
 }
 
 /**
@@ -297,6 +327,7 @@ export async function renderA4(opts) {
  */
 export async function renderA4Plan(opts) {
   const { settings, plan } = opts;
+  await waitForFonts();
   const { images, ensureImages, imageSize } = await imageHelpers(opts.loadImage);
   const n = plan.length;
   const words = Math.max(150, Math.round(settings.words / n));

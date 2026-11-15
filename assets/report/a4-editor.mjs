@@ -2,8 +2,8 @@
 // 照片預設保持比例，按住 Shift 才自由縮放；標題／文字／圖說預設自由縮放，按住 Shift 才等比例。
 // 拖曳中只用 rAF 更新疊層與參考線，放開後才解重疊、補空隙並呼叫 reflowPage，溢出接到下一頁。
 
-import { reflowPage } from './a4-layout.mjs?v=6afe119b22';
-import { drawA4Ops, drawA4Page } from './a4.mjs?v=6afe119b22';
+import { reflowPage } from './a4-layout.mjs?v=f6c935fec3';
+import { drawA4Ops, drawA4Page } from './a4.mjs?v=f6c935fec3';
 
 export const A4_WIDTH = 1240;
 export const A4_HEIGHT = 1754;
