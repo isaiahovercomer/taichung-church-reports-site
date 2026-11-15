@@ -47,18 +47,18 @@ export const STEPS = [
     title: '報導設定：字數', text: '拖動滑桿設定網頁報導大約要多少字，系統會依素材自動整理到接近這個字數。' },
   { id: 'gen-limits', since: 1, track: 'manager', view: 'generate', target: '[data-testid=settings] input[name=maxPhotos]',
     title: '照片與影片上限', text: '設定最多放幾張照片、幾部影片。照片太多時會優先選有圖說的。' },
-  { id: 'gen-layout', since: 1, track: 'manager', view: 'generate', target: '[data-testid=settings] fieldset',
-    title: '版型', text: '選擇網頁報導的版型：經典單欄、圖文交錯或雙欄專題。' },
-  { id: 'gen-pages', since: 1, track: 'manager', view: 'generate', target: '[data-testid=settings] input[name=pages]',
+  { id: 'gen-layout', since: 1, track: 'manager', view: 'generate', target: '[data-testid=layout-choice], [data-testid=settings-a4] fieldset, [data-testid=settings] fieldset',
+    title: 'A4 版型', text: '在「A4 圖檔」分頁用示意圖卡片選擇版型（經典單欄、圖文繞排、雙欄專刊等共 14 種，卡片上是該版型第 1 頁的樣子）。點選後下方預覽會立刻換成該版型，不必再按「一鍵生成」。' },
+  { id: 'gen-pages', since: 1, track: 'manager', view: 'generate', target: '[data-testid=settings-a4] input[name=pages], [data-testid=settings] input[name=pages]',
     title: 'A4 頁數', text: '設定 A4 圖檔／PDF 要幾頁。內容放不下時會自動減字、減照片，並註明「完整內容請見網頁報導」。' },
   { id: 'gen-unit-picks', since: 4, track: 'manager', view: 'generate', target: '[data-testid=pick-materials]',
     title: '選擇要用的素材（依單位分組）', text: '這裡勾選這次報導要用哪些素材。行動有單位時會依單位分組，勾或取消組名就是整組選取。報導會先放全體（總報導），再依單位順序放各單位，每個單位前面有單位標題。' },
   { id: 'gen-plan', since: 4, track: 'manager', view: 'generate', target: '[data-testid=plan-box], [data-testid=gen-a4]',
     title: 'A4 每一頁放哪些單位', text: '素材分屬兩個以上的單位時，會出現「A4 頁面安排」：選「自動排版」由系統依單位順序接續排；選「自訂」則每一頁一列，點單位按鈕複選這一頁要放哪些單位。有頁面沒選、或有單位沒放到任何一頁時會提醒。' },
   { id: 'gen-web', since: 1, track: 'manager', view: 'generate', target: '[data-testid=gen-web]',
-    title: '一鍵生成網頁報導', text: '按一下就依設定產生網頁報導並在下方預覽，可以下載單一 HTML 或存回後端。' },
+    title: '一鍵生成網頁報導', text: '在「網頁報導」分頁按一下就依設定產生網頁報導並在下方預覽，可以下載單一 HTML、存回後端，或發佈到網站得到公開連結。切換到 A4 分頁不會清空這份預覽。' },
   { id: 'gen-a4', since: 1, track: 'manager', view: 'generate', target: '[data-testid=gen-a4]',
-    title: '一鍵生成 A4 圖檔／PDF', text: '產生 A4 圖檔，可逐頁下載圖片，或按旁邊的「下載 PDF」得到整份 PDF。' },
+    title: '一鍵生成 A4 圖檔／PDF', text: '在「A4 圖檔」分頁產生 A4 圖檔，可下載 PNG 或 PDF，也可存回後端。選版型時預覽會立刻更新。' },
   { id: 'members', since: 2, track: 'manager', view: 'members', target: '[data-testid=add-collaborator] input[name=collaborator-email]',
     title: '新增／移除共同協作者', text: '在「協作者」頁籤輸入對方的 email（姓名選填）按「新增」，或直接點「常用聯絡人」加入，再把行動網址傳給對方；對方登入後就能上傳並編輯自己的素材。名單上每位協作者都可以按「移除」，已上傳的素材會保留。' },
   { id: 'action-settings', since: 2, track: 'manager', view: 'settings', target: '[data-testid=action-form] input[name=name]',
@@ -284,6 +284,11 @@ export function createTour(hooks) {
     target = null;
     if (hash && location.hash !== hash && !(hash === '#/' && (location.hash === '' || location.hash === '#'))) {
       hooks.go(hash);
+    }
+    if (hash === '#/a/' || (hash && hash.includes('/generate'))) {
+      const wantA4 = ['gen-layout', 'gen-pages', 'gen-plan', 'gen-a4'].includes(s.id);
+      const tab = document.querySelector(wantA4 ? '[data-testid=tab-a4]' : '[data-testid=tab-web]');
+      if (tab) tab.click();
     }
     if (hash) target = await waitFor(s.target, WAIT);
     if (steps[idx] !== s) return; // 使用者已經換步

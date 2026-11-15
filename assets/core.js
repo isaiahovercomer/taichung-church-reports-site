@@ -26,11 +26,12 @@ var RptCore = (function () {
 
   // ---------- 常數 ----------
   // version 3：合併查詢加速（boot／action.open／photos.getMany）、協作者姓名與常用聯絡人、行動錄音逐字稿（OpenAI）
+  // version 8：產出發佈（outputs.publish／outputs.public／outputs.unpublish），outputs.save 支援 A4 圖檔
   // version 7：行動的單位／區域（units）、素材所屬單位（unitId）
   // version 6：總管理者批次刪除行動（actions.deleteMany）
   // version 5：登入時回傳首頁資料（auth.verifyCode withBoot）
   // version 4：行動日期區間（endDate）、防重複建立（requestId、同名同日合併）、刪除行動（actions.delete）
-  var RPT_VERSION_ = 7;
+  var RPT_VERSION_ = 8;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -96,7 +97,7 @@ var RptCore = (function () {
   var RPT_CELL_MAX_ = 40000;
   var RPT_MAX_COLLABORATORS_ = 300;
   var RPT_VIDEO_HOSTS_ = ['www.youtube.com', 'youtube.com', 'm.youtube.com', 'youtu.be', 'drive.google.com'];
-  var RPT_LAYOUTS_ = ['classic', 'alternate', 'columns'];
+  var RPT_LAYOUTS_ = ['classic', 'alternate', 'columns', 'magazine', 'wrap2', 'collage', 'tri', 'banner', 'newspaper', 'timeline', 'quote', 'card', 'sidebar', 'fullbleed'];
   var RPT_PRESETS_ = [
     { id: 'brief', name: '週訊短訊', words: 600, maxPhotos: 2, maxVideos: 0, pages: 1, layout: 'classic' },
     { id: 'standard', name: '標準報導', words: 1500, maxPhotos: 4, maxVideos: 1, pages: 2, layout: 'alternate' },
@@ -1063,7 +1064,7 @@ var RptCore = (function () {
   function cleanMaterial_(env, ctx, action, data, existing) {
     var m = {};
     m.kind = data.kind === 'testimony' ? 'testimony' : data.kind === 'report' ? 'report' : fail_('BAD_INPUT', '類型只能是「報導」或「見證」');
-    m.title = str_(data.title, '標題', 200, true);
+    m.title = str_(data.title, '標題', 200, false);
     m.author = str_(data.author, '作者署名', 100, false);
     m.text = str_(data.text, '文字', 20000, false);
     var photos = data.photos || [];
@@ -1117,7 +1118,6 @@ var RptCore = (function () {
       }
       m.videos.push(vv);
     }
-    if (!m.text && !m.photos.length && !m.videos.length) fail_('BAD_INPUT', '請至少填寫文字、照片或影片其中一項');
     // 所屬單位（選填）：空白＝全體；只能選這個行動有的單位
     var unitId = str_(data.unitId == null ? '' : data.unitId, '單位', 20, false);
     if (unitId) {
@@ -1291,16 +1291,152 @@ var RptCore = (function () {
   }
 
   // ---------- 產出紀錄 ----------
+  function publicUrlFor_(publicId) {
+    return '#/r/' + publicId;
+  }
+  function findOutput_(env, actionId, outputId) {
+    var list = env.store.listOutputs(actionId);
+    var i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i].id === outputId) return list[i];
+    }
+    return null;
+  }
+  function sanitizeOwnerOutput_(rec) {
+    var out = {};
+    var k;
+    for (k in rec) if (Object.prototype.hasOwnProperty.call(rec, k)) out[k] = rec[k];
+    if (rec.published && rec.publicId) out.publicUrl = publicUrlFor_(rec.publicId);
+    return out;
+  }
+  function publicOutputView_(rec, html) {
+    return {
+      id: rec.publicId,
+      title: rec.title,
+      html: html,
+      kind: rec.kind || 'web',
+      format: rec.format || 'html',
+      pages: rec.pages || 0,
+      createdAt: rec.createdAt,
+      publishedAt: rec.publishedAt || null
+    };
+  }
+  function dataUrlToBase64_(dataUrl) {
+    var parts = String(dataUrl).split(',');
+    return parts.length > 1 ? parts[1] : parts[0];
+  }
   function saveOutput_(env, ctx, data) {
     data = data || {};
     var action = loadAction_(env, ctx, data.actionId);
     if (!canManage_(ctx, action) && !isCollaborator_(ctx, action)) fail_('FORBIDDEN', '只有負責人或協作者可以把報導存回後端');
-    var html = data.html;
-    if (!isString_(html) || !html || html.length > limits_(env).outputMaxChars) fail_('BAD_INPUT', '報導內容不正確或太大');
+    var kind = data.kind === 'a4' ? 'a4' : 'web';
+    var format = data.format || (kind === 'a4' ? 'png' : 'html');
     var title = str_(data.title, '標題', 200, true);
     var now = new Date(env.now()).toISOString();
+    var stamp = now.slice(0, 19).replace(/[:T]/g, '-');
+    var settings = normalizeSettings(data.settings);
+    var pages = Math.max(0, Math.floor(Number(data.pages) || 0));
+    var chars = Math.max(0, Math.floor(Number(data.chars) || 0));
+    var photos = Math.max(0, Math.floor(Number(data.photos) || 0));
+    var recs = [];
+    var makeRec = function (fileId, pageIndex) {
+      var rec = {
+        id: newId_(env, 'o'),
+        title: title,
+        fileId: fileId,
+        kind: kind,
+        format: format,
+        settings: settings,
+        chars: chars,
+        photos: photos,
+        pages: pages,
+        pageIndex: pageIndex || 0,
+        createdBy: ctx.email,
+        createdAt: now,
+        published: false,
+        publicId: null,
+        publishedAt: null
+      };
+      env.withLock(function () {
+        env.store.addOutput(action.id, rec);
+      });
+      recs.push(rec);
+      return rec;
+    };
+    if (kind === 'web') {
+      var html = data.html;
+      if (!isString_(html) || !html || html.length > limits_(env).outputMaxChars) fail_('BAD_INPUT', '報導內容不正確或太大');
+      var fileId = env.store.saveTextFile(action.id, {
+        name: '報導-' + stamp + '.html',
+        mime: 'text/html',
+        text: html,
+        meta: { kind: 'output', uploadedBy: ctx.email }
+      });
+      makeRec(fileId, 0);
+      return { output: sanitizeOwnerOutput_(recs[0]) };
+    }
+    var urls = [];
+    if (data.dataUrls && data.dataUrls.length) urls = data.dataUrls;
+    else if (data.dataUrl) urls = [data.dataUrl];
+    if (!urls.length) fail_('BAD_INPUT', '缺少 A4 圖檔內容');
+    var i;
+    var mime = format === 'pdf' ? 'application/pdf' : 'image/png';
+    var ext = format === 'pdf' ? 'pdf' : 'png';
+    for (i = 0; i < urls.length; i++) {
+      var base64 = dataUrlToBase64_(urls[i]);
+      var a4FileId;
+      if (typeof env.store.saveBinaryFile === 'function') {
+        a4FileId = env.store.saveBinaryFile(action.id, {
+          name: '報導-' + stamp + '-p' + (i + 1) + '.' + ext,
+          mime: mime,
+          base64: base64,
+          meta: { kind: 'output', uploadedBy: ctx.email }
+        });
+      } else {
+        a4FileId = env.store.saveTextFile(action.id, {
+          name: '報導-' + stamp + '-p' + (i + 1) + '.' + ext,
+          mime: mime,
+          text: urls[i],
+          meta: { kind: 'output', uploadedBy: ctx.email }
+        });
+      }
+      makeRec(a4FileId, i);
+    }
+    if (recs.length === 1) return { output: sanitizeOwnerOutput_(recs[0]) };
+    var sanitized = [];
+    for (i = 0; i < recs.length; i++) sanitized.push(sanitizeOwnerOutput_(recs[i]));
+    return { outputs: sanitized };
+  }
+  function publishOutput_(env, ctx, data) {
+    data = data || {};
+    var action = loadAction_(env, ctx, data.actionId);
+    if (!canManage_(ctx, action) && !isCollaborator_(ctx, action)) fail_('FORBIDDEN', '只有負責人或協作者可以發佈報導');
+    var now = new Date(env.now()).toISOString();
+    var existing = data.outputId ? findOutput_(env, action.id, data.outputId) : null;
+    if (data.outputId && !existing) fail_('NOT_FOUND', '找不到要發佈的產出紀錄');
+    var html = data.html;
+    var title = data.title || (existing && existing.title) || '';
+    if (existing) {
+      if (existing.kind && existing.kind !== 'web') fail_('BAD_INPUT', '只有網頁報導可以發佈到網站');
+      html = env.store.readTextFile(existing.fileId);
+    }
+    if (!isString_(html) || !html || html.length > limits_(env).outputMaxChars) fail_('BAD_INPUT', '報導內容不正確或太大');
+    title = str_(title, '標題', 200, true);
+    var publicId = existing && existing.publicId ? existing.publicId : newId_(env, 'r');
+    if (existing) {
+      existing.published = true;
+      existing.publicId = publicId;
+      existing.publishedAt = now;
+      if (!existing.kind) existing.kind = 'web';
+      if (!existing.format) existing.format = 'html';
+      env.withLock(function () {
+        env.store.updateOutput(action.id, existing);
+      });
+      return { output: sanitizeOwnerOutput_(existing), publicId: publicId, publicUrl: publicUrlFor_(publicId) };
+    }
+    var stamp = now.slice(0, 19).replace(/[:T]/g, '-');
     var fileId = env.store.saveTextFile(action.id, {
-      name: '報導-' + now.slice(0, 19).replace(/[:T]/g, '-') + '.html',
+      name: '公開報導-' + stamp + '.html',
       mime: 'text/html',
       text: html,
       meta: { kind: 'output', uploadedBy: ctx.email }
@@ -1309,16 +1445,50 @@ var RptCore = (function () {
       id: newId_(env, 'o'),
       title: title,
       fileId: fileId,
+      kind: 'web',
+      format: 'html',
       settings: normalizeSettings(data.settings),
       chars: Math.max(0, Math.floor(Number(data.chars) || 0)),
       photos: Math.max(0, Math.floor(Number(data.photos) || 0)),
+      pages: 0,
+      pageIndex: 0,
       createdBy: ctx.email,
-      createdAt: now
+      createdAt: now,
+      published: true,
+      publicId: publicId,
+      publishedAt: now
     };
     env.withLock(function () {
       env.store.addOutput(action.id, rec);
     });
-    return { output: rec };
+    return { output: sanitizeOwnerOutput_(rec), publicId: publicId, publicUrl: publicUrlFor_(publicId) };
+  }
+  function getPublicOutput_(env, ctx, data) {
+    data = data || {};
+    var publicId = data.id ? String(data.id) : '';
+    if (!publicId) fail_('BAD_INPUT', '缺少報導 id');
+    if (typeof env.store.findPublicOutput !== 'function') fail_('NOT_FOUND', '找不到已發佈的報導');
+    var found = env.store.findPublicOutput(publicId);
+    if (!found || !found.output || !found.output.published) fail_('NOT_FOUND', '找不到已發佈的報導');
+    var rec = found.output;
+    if (rec.kind && rec.kind !== 'web') fail_('NOT_FOUND', '找不到已發佈的報導');
+    var html = env.store.readTextFile(rec.fileId);
+    if (!isString_(html) || !html) fail_('NOT_FOUND', '找不到已發佈的報導');
+    return { output: publicOutputView_(rec, html) };
+  }
+  function unpublishOutput_(env, ctx, data) {
+    data = data || {};
+    var action = loadAction_(env, ctx, data.actionId);
+    if (!canManage_(ctx, action) && !isCollaborator_(ctx, action)) fail_('FORBIDDEN', '只有負責人或協作者可以取消發佈');
+    var rec = data.outputId ? findOutput_(env, action.id, data.outputId) : null;
+    if (!rec) fail_('NOT_FOUND', '找不到要取消發佈的產出紀錄');
+    rec.published = false;
+    rec.publicId = null;
+    rec.publishedAt = null;
+    env.withLock(function () {
+      env.store.updateOutput(action.id, rec);
+    });
+    return { output: sanitizeOwnerOutput_(rec) };
   }
   function listOutputs_(env, ctx, data) {
     var action = loadAction_(env, ctx, data && data.actionId);
@@ -1326,7 +1496,10 @@ var RptCore = (function () {
     list.sort(function (a, b) {
       return a.createdAt < b.createdAt ? 1 : -1;
     });
-    return { outputs: list };
+    var out = [];
+    var i;
+    for (i = 0; i < list.length; i++) out.push(sanitizeOwnerOutput_(list[i]));
+    return { outputs: out };
   }
 
   // ---------- 常用聯絡人（每位使用者自己的，存在 ScriptProperties；單一值上限約 9KB） ----------
@@ -1983,6 +2156,8 @@ var RptCore = (function () {
     'video.complete': completeVideoUpload_,
     'outputs.save': saveOutput_,
     'outputs.list': listOutputs_,
+    'outputs.publish': publishOutput_,
+    'outputs.unpublish': unpublishOutput_,
     'admin.list': listAdmins_,
     'admin.add': addAdmin_,
     'admin.remove': removeAdmin_,
@@ -2029,6 +2204,7 @@ var RptCore = (function () {
       else if (action === 'auth.requestCode') res = requestCode_(env, data);
       else if (action === 'auth.verifyCode') res = verifyCode_(env, data);
       else if (action === 'auth.logout') res = logout_(env, body.token);
+      else if (action === 'outputs.public') res = getPublicOutput_(env, null, data);
       else if (action === 'me') res = meInfo_(env, ctxOf_(env, body.token));
       else if (isString_(action) && hasOwn_(ROUTES_, action)) res = ROUTES_[action](env, ctxOf_(env, body.token), data);
       else fail_('BAD_INPUT', '未知的操作');

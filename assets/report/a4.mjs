@@ -2,8 +2,8 @@
 // 真的塞不下就減少節錄字數（必要時減少照片），並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=e43b49d580';
-import { LOGO_DATA_URL } from '../brand.mjs?v=e43b49d580';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4 } from './a4-layout.mjs?v=90ad9fd72a';
+import { LOGO_DATA_URL } from '../brand.mjs?v=90ad9fd72a';
 
 let logoPromise = null;
 /** 載入台中市召會標誌（只載一次；失敗回 null，改畫簡單外框） */
@@ -108,19 +108,27 @@ function drawChrome(ctx, index, total, title) {
   ctx.fillText(`— ${index + 1} / ${total} —`, W / 2, H - 56);
 }
 
-function drawPage(page, index, total, title, images) {
-  const canvas = document.createElement('canvas');
-  canvas.width = A4.width;
-  canvas.height = A4.height;
-  const ctx = canvas.getContext('2d');
-  drawChrome(ctx, index, total, title);
-  for (const op of page.ops) {
+function drawFooter(ctx, index, total, light) {
+  const W = A4.width;
+  const H = A4.height;
+  ctx.fillStyle = light ? 'rgba(255,255,255,0.45)' : COLORS.line;
+  ctx.fillRect(100, H - 96, W - 200, 2);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = light ? '#ffffff' : COLORS.gray;
+  ctx.font = font(20);
+  ctx.fillText(`— ${index + 1} / ${total} —`, W / 2, H - 56);
+}
+
+/** 把一頁的 ops 畫到既有 canvas context（給預覽／編輯器）。images 可省略。 */
+export function drawA4Ops(ctx, ops, images) {
+  const map = images instanceof Map ? images : new Map(Object.entries(images || {}));
+  for (const op of ops || []) {
     if (op.op === 'text') {
       ctx.font = op.font;
       ctx.fillStyle = op.color;
       ctx.textAlign = op.align || 'left';
       ctx.fillText(op.text, op.x, op.y);
-    } else if (op.op === 'image') drawImage(ctx, images.get(op.photoId), op);
+    } else if (op.op === 'image') drawImage(ctx, map.get(op.photoId), op);
     else if (op.op === 'rect') {
       if (op.fill) {
         ctx.fillStyle = op.fill;
@@ -140,6 +148,17 @@ function drawPage(page, index, total, title, images) {
       ctx.stroke();
     }
   }
+}
+
+function drawPage(page, index, total, title, images) {
+  const canvas = document.createElement('canvas');
+  canvas.width = A4.width;
+  canvas.height = A4.height;
+  const ctx = canvas.getContext('2d');
+  drawChrome(ctx, index, total, title);
+  drawA4Ops(ctx, page.ops, images);
+  const fullbleed = (page.ops || []).some((o) => o.op === 'image' && o.x <= 0 && o.y <= 0 && o.w >= A4.width && o.h >= A4.height - 1);
+  drawFooter(ctx, index, total, fullbleed);
   return canvas;
 }
 

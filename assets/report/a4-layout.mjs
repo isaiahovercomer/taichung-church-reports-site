@@ -1,19 +1,27 @@
 // A4 版面計算（純函式，不碰 DOM）：把報導區塊排進 1240×1754 px（A4 210:297，150dpi）頁面。
-// 回傳每頁的繪圖指令，由 a4.mjs 畫到 canvas。A4／PDF 不放影片：video 區塊一律略過。measure(text, font) 由呼叫端提供（canvas.measureText 或測試用假函式）。
+// 框架式排版：每頁先決定固定框（標題／主圖／照片），內文再流進「欄位減去障礙物」的文字區，
+// 真正繞著照片排；一頁排滿接下一頁。回傳每頁的 frames（給編輯器拖拉）與 ops（給 a4.mjs 畫圖）。
+// A4／PDF 不放影片：video 區塊一律略過。measure(text, font) 由呼叫端提供（canvas.measureText 或測試用假函式）。
+// 同步純函式：素材與圖片尺寸已快取時不做 I/O、不讀 DOM，只做換行與矩形運算。
+
 
 export const A4 = { width: 1240, height: 1754 };
 export const FONT_FAMILY = '"Noto Sans CJK TC","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif';
 export const COLORS = { navy: '#16324F', gold: '#836427', goldLight: '#C9A865', text: '#1F2D3D', gray: '#5A6A7A', line: '#E4E3DE', bg: '#FFFFFF', paper: '#F5F5F2' };
+
 
 const MARGIN = 100;
 const TOP_FIRST = 196;
 const TOP_OTHER = 150;
 const BOTTOM = A4.height - 130;
 
+
 export const font = (size, weight = 400) => `${weight} ${Math.round(size)}px ${FONT_FAMILY}`;
+
 
 const NO_LINE_START = '，。、；：！？）」』】》〉,.;:!?)」”’…';
 const TOKEN_RE = /[A-Za-z0-9@#$%&*+=/:._~'"\-]+\s*|\s+|[\s\S]/gu;
+
 
 /** 依寬度換行：中文逐字、英數以單字為單位；行首避開標點。 */
 export function wrapText(text, fnt, width, measure) {
@@ -22,7 +30,6 @@ export function wrapText(text, fnt, width, measure) {
   const tokens = String(text ?? '').match(TOKEN_RE) || [];
   for (let tok of tokens) {
     if (measure(tok, fnt) > width) {
-      // 太長的英數串（例如網址）拆成單字元
       for (const ch of Array.from(tok)) {
         if (line && measure(line + ch, fnt) > width) {
           lines.push(line);
@@ -41,184 +48,697 @@ export function wrapText(text, fnt, width, measure) {
   return lines;
 }
 
+
+export const LAYOUTS = [
+  { id: 'classic', name: '經典單欄', desc: '全寬單欄、主圖置中，適合正式報導與週訊長文。' },
+  { id: 'alternate', name: '圖文繞排', desc: '照片左右輪流、內文逐行繞著照片排，圖說在照片下方。' },
+  { id: 'columns', name: '雙欄專刊', desc: '雙欄排版、照片跨欄置中，適合篇幅較長的專題。' },
+  { id: 'magazine', name: '大主圖雜誌封面', desc: '大主圖在標題下方佔據上半頁，內文繞排，雜誌感最強。' },
+  { id: 'wrap2', name: '雙欄繞排', desc: '雙欄加上照片左右輪流繞排，資訊量大又不擁擠。' },
+  { id: 'collage', name: '照片拼貼', desc: '照片兩兩並排成格狀拼貼，配短文與圖說，適合活動花絮。' },
+  { id: 'tri', name: '三欄專刊', desc: '三欄小字排版，適合內容多、像刊物內頁的專刊。' },
+  { id: 'banner', name: '寬圖橫幅穿插', desc: '照片以寬橫幅全寬穿插在段落之間，節奏明快。' },
+  { id: 'newspaper', name: '報紙頭版', desc: '大標題加三欄，像報紙頭版，適合頭條與多則短訊。' },
+  { id: 'timeline', name: '時間軸', desc: '左側一條時間線、標題帶圓點，照片靠右繞排，適合歷程回顧。' },
+  { id: 'quote', name: '見證引言大字', desc: '見證署名放大置中、上下加金線，適合見證與引言為主的報導。' },
+  { id: 'card', name: '上圖下文卡片', desc: '每張照片連圖說裝進一張淺色卡片，段落接在卡片之後。' },
+  { id: 'sidebar', name: '左側邊欄', desc: '左側邊欄列出本期要目，主文在右側繞排。' },
+  { id: 'fullbleed', name: '全版滿版照片', desc: '第一頁照片滿版、標題白字疊印在照片上，內文從第二頁開始。' },
+];
+
+
+const LAYOUT_SPECS = {
+  classic: { columns: 1, photo: 'center', photoW: 1, cover: 'normal', titleScale: 1 },
+  alternate: { columns: 1, photo: 'alternate', photoW: 0.52, cover: 'normal', titleScale: 1 },
+  columns: { columns: 2, photo: 'center', photoW: 1, cover: 'normal', titleScale: 1 },
+  magazine: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'hero', titleScale: 1.08 },
+  wrap2: { columns: 2, photo: 'alternate', photoW: 0.58, cover: 'normal', titleScale: 1 },
+  collage: { columns: 1, photo: 'grid', photoW: 0.5, cover: 'normal', titleScale: 1 },
+  tri: { columns: 3, photo: 'center', photoW: 1, cover: 'normal', titleScale: 0.92, bodyScale: 0.9 },
+  banner: { columns: 1, photo: 'banner', photoW: 1, cover: 'normal', titleScale: 1 },
+  newspaper: { columns: 3, photo: 'top', photoW: 1, cover: 'normal', titleScale: 1.18, bodyScale: 0.9 },
+  timeline: { columns: 1, photo: 'right', photoW: 0.38, cover: 'normal', titleScale: 1, timeline: true },
+  quote: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, quote: true },
+  card: { columns: 1, photo: 'card', photoW: 1, cover: 'normal', titleScale: 1 },
+  sidebar: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, sidebar: true },
+  fullbleed: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'fullbleed', titleScale: 1.1 },
+};
+
+
+function specFor(id) { return LAYOUT_SPECS[id] || LAYOUT_SPECS.classic; }
+function fallbackMeasure(t, f) {
+  const m = String(f).match(/(\d+)px/);
+  const sz = m ? parseInt(m[1], 10) : 24;
+  return String(t ?? '').length * sz * 0.55;
+}
+function sizeOf(imageSize, id) {
+  const s = imageSize ? imageSize(id) : null;
+  return s && s.w > 0 && s.h > 0 ? s : { w: 4, h: 3 };
+}
+function nextId(st, type) { st.seq = (st.seq || 0) + 1; return 'p' + st.pageIndex + '-' + type + '-' + st.seq; }
+
+
+function geometryFor(spec, top) {
+  let mainX = MARGIN;
+  let mainW = A4.width - 2 * MARGIN;
+  let railX = null;
+  if (spec.sidebar) { mainX = MARGIN + 240 + 36; mainW = A4.width - MARGIN - mainX; }
+  else if (spec.timeline) { mainX = MARGIN + 36; mainW = A4.width - MARGIN - mainX; railX = MARGIN + 12; }
+  const ncol = spec.columns || 1;
+  const gap = ncol === 3 ? 36 : 44;
+  const colW = (mainW - gap * (ncol - 1)) / ncol;
+  const cols = [];
+  for (let i = 0; i < ncol; i++) cols.push({ x: mainX + i * (colW + gap), y: top, w: colW, h: Math.max(0, BOTTOM - top) });
+  return { mainX, mainW, cols, colW, gap, railX };
+}
+
+
+function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, isFirst, pageIndex) {
+  const CW = A4.width - 2 * MARGIN;
+  let n = 0;
+  const hid = (t) => 'p' + pageIndex + '-' + t + '-' + (++n);
+  if (!isFirst) return TOP_OTHER;
+  if (spec.cover === 'fullbleed' && cover) {
+    page.frames.push({ id: hid('image'), type: 'image', x: 0, y: 0, w: A4.width, h: A4.height, locked: false, photoId: cover.photoId, fit: 'cover' });
+    page.ops.push({ op: 'image', photoId: cover.photoId, x: 0, y: 0, w: A4.width, h: A4.height, fit: 'cover', radius: 0 });
+    page.ops.push({ op: 'rect', x: 0, y: 1060, w: A4.width, h: 694, fill: 'rgba(22,50,79,0.55)' });
+    const titleSize = 58 * s * (spec.titleScale || 1);
+    const tf = font(titleSize, 900);
+    const lines = data.title ? wrapText(data.title, tf, CW, measure) : [];
+    const lh = titleSize * 1.3;
+    page.frames.push({ id: hid('title'), type: 'title', x: MARGIN, y: 1160, w: CW, h: lines.length * lh, locked: false });
+    lines.forEach((ln, i) => { page.ops.push({ op: 'text', x: MARGIN, y: 1160 + i * lh + titleSize, text: ln, font: tf, color: '#ffffff' }); });
+    if (metaLine) {
+      const mf = font(23 * s);
+      const mlines = wrapText(metaLine, mf, CW, measure);
+      const my = 1160 + lines.length * lh + 20 * s;
+      page.frames.push({ id: hid('meta'), type: 'meta', x: MARGIN, y: my, w: CW, h: mlines.length * 23 * s * 1.6, locked: false });
+      mlines.forEach((ln, i) => { page.ops.push({ op: 'text', x: MARGIN, y: my + i * 23 * s * 1.6 + 23 * s, text: ln, font: mf, color: '#ffffff' }); });
+    }
+    return BOTTOM + 1;
+  }
+  let y = TOP_FIRST;
+  if (data.kicker) {
+    const f = font(24 * s, 700);
+    page.frames.push({ id: 'p' + pageIndex + '-kicker-' + (++n), type: 'meta', x: MARGIN, y: y, w: CW, h: 24 * s + 18 * s, locked: false });
+    page.ops.push({ op: 'text', x: MARGIN, y: y + 24 * s, text: data.kicker, font: f, color: COLORS.gold });
+    y += 24 * s + 18 * s;
+  }
+  const titleSize = 54 * s * (spec.titleScale || 1);
+  const tf = font(titleSize, 900);
+  const tlines = data.title ? wrapText(data.title, tf, CW, measure) : [];
+  const tlh = titleSize * 1.35;
+  if (tlines.length) {
+    page.frames.push({ id: hid('title'), type: 'title', x: MARGIN, y: y, w: CW, h: tlines.length * tlh, locked: false });
+    for (const ln of tlines) { page.ops.push({ op: 'text', x: MARGIN, y: y + titleSize, text: ln, font: tf, color: COLORS.navy }); y += tlh; }
+  }
+  y += 10 * s;
+  const mf = font(23 * s);
+  const mlines = wrapText(metaLine || '', mf, CW, measure);
+  if (mlines.length) {
+    page.frames.push({ id: hid('meta'), type: 'meta', x: MARGIN, y: y, w: CW, h: mlines.length * 23 * s * 1.6, locked: false });
+    for (const ln of mlines) { page.ops.push({ op: 'text', x: MARGIN, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray }); y += 23 * s * 1.6; }
+  }
+  y += 14 * s;
+  page.ops.push({ op: 'line', x1: MARGIN, y1: y, x2: MARGIN + CW, y2: y, color: COLORS.line, width: 2 });
+  y += 30 * s;
+  if (cover) {
+    const sz = sizeOf(imageSize, cover.photoId);
+    const h = Math.min((CW * sz.h) / sz.w, (spec.cover === 'hero' ? 780 : 640) * s);
+    page.frames.push({ id: hid('image'), type: 'image', x: MARGIN, y: y, w: CW, h: h, locked: false, photoId: cover.photoId, fit: 'cover' });
+    page.ops.push({ op: 'image', photoId: cover.photoId, x: MARGIN, y: y, w: CW, h: h, fit: 'cover', radius: 8 });
+    y += h + 12 * s;
+    if (cover.caption) {
+      const cf = font(21 * s);
+      const clines = wrapText(cover.caption, cf, CW, measure);
+      if (clines.length) {
+        page.frames.push({ id: hid('caption'), type: 'caption', x: MARGIN, y: y, w: CW, h: clines.length * 21 * s * 1.5, locked: false, photoId: cover.photoId });
+        for (const ln of clines) { page.ops.push({ op: 'text', x: MARGIN + CW / 2, y: y + 21 * s, text: ln, font: cf, color: COLORS.gray, align: 'center' }); y += 21 * s * 1.5; }
+      }
+    }
+    y += 22 * s;
+  }
+  return y;
+}
+
+
+function makeState(page, spec, cols, opts) {
+  return {
+    page, spec, cols, col: 0, y: cols.length ? cols[0].y : TOP_OTHER,
+    obstacles: [], figIndex: 0, s: opts.s || 1, measure: opts.measure,
+    imageSize: opts.imageSize, seq: opts.seq || 0, pageIndex: opts.pageIndex || 0,
+    bodySize: opts.bodySize, bodyLH: opts.bodyLH, bf: opts.bf, railX: opts.railX || null,
+  };
+}
+function colRect(st) { return st.cols[st.col]; }
+function atTop(st) { const c = colRect(st); return st.y <= c.y + 0.5; }
+function nextSlot(st) {
+  if (st.col < st.cols.length - 1) { st.col++; st.y = colRect(st).y; return true; }
+  return false;
+}
+function segmentsAt(st, y, lh) {
+  const c = colRect(st);
+  let segs = [{ x: c.x, w: c.w }];
+  for (const o of st.obstacles) {
+    if (!(o.y < y + lh && o.y + o.h > y)) continue;
+    const next = [];
+    for (const seg of segs) {
+      if (o.x >= seg.x + seg.w || o.x + o.w <= seg.x) { next.push(seg); continue; }
+      if (o.x > seg.x) next.push({ x: seg.x, w: o.x - seg.x });
+      if (o.x + o.w < seg.x + seg.w) next.push({ x: o.x + o.w, w: seg.x + seg.w - (o.x + o.w) });
+    }
+    segs = next;
+  }
+  return segs.filter((sg) => sg.w > 1);
+}
+function currentSeg(st, lh) {
+  const segs = segmentsAt(st, st.y, lh || st.bodyLH);
+  if (!segs.length) return null;
+  let best = segs[0];
+  for (const sg of segs) if (sg.w > best.w) best = sg;
+  return best;
+}
+function jumpY(st) {
+  const c = colRect(st);
+  const cand = st.obstacles.filter((o) => o.y < st.y + st.bodyLH && o.y + o.h > st.y && o.x < c.x + c.w && o.x + o.w > c.x);
+  if (!cand.length) return null;
+  return Math.min.apply(null, cand.map((o) => o.y + o.h));
+}
+function jumpPastObstacles(st, lh) {
+  const c = colRect(st);
+  const obs = st.obstacles.filter((o) => o.y < st.y + lh && o.y + o.h > st.y && o.x < c.x + c.w && o.x + o.w > c.x);
+  if (!obs.length) return true;
+  st.y = Math.max.apply(null, obs.map((o) => o.y + o.h));
+  return st.y <= BOTTOM;
+}
+
+
+function flowPara(st, b, idx) {
+  const s = st.s;
+  const lh = st.bodyLH;
+  const size = st.bodySize;
+  const fnt = st.bf;
+  const tokens = String(b.text ?? '').match(TOKEN_RE) || [];
+  let ti = 0;
+  let line = '';
+  let chunkStartY = st.y;
+  let chunkCol = st.col;
+  let chunkLines = 0;
+  const flushChunk = () => {
+    if (chunkLines > 0) {
+      st.page.frames.push({ id: nextId(st, 'text'), type: 'text', x: st.cols[chunkCol].x, y: chunkStartY, w: st.cols[chunkCol].w, h: chunkLines * lh, blockIndex: idx });
+      chunkLines = 0;
+    }
+  };
+  const emitLine = () => {
+    const seg = currentSeg(st, lh);
+    if (!seg) return false;
+    st.page.ops.push({ op: 'text', x: seg.x, y: st.y + (lh + size * 0.72) / 2, text: line, font: fnt, color: COLORS.text });
+    st.y += lh;
+    chunkLines++;
+    line = '';
+    return true;
+  };
+  while (ti < tokens.length) {
+    let seg = currentSeg(st, lh);
+    if (!seg || seg.w < 90) {
+      const jy = jumpY(st);
+      if (jy != null && jy < BOTTOM && jy > st.y) { st.y = jy; continue; }
+      flushChunk();
+      if (!nextSlot(st)) return { remaining: line + tokens.slice(ti).join('') };
+      chunkStartY = st.y; chunkCol = st.col; continue;
+    }
+    if (st.y + lh > BOTTOM) {
+      flushChunk();
+      if (!nextSlot(st)) return { remaining: line + tokens.slice(ti).join('') };
+      chunkStartY = st.y; chunkCol = st.col; continue;
+    }
+    const tok = tokens[ti];
+    if (st.measure(tok, fnt) > seg.w) {
+      if (line) { emitLine(); continue; }
+      const chars = Array.from(tok);
+      tokens.splice(ti, 1, ...chars);
+      continue;
+    }
+    if (line && st.measure(line + tok, fnt) > seg.w && !NO_LINE_START.includes(tok[0])) {
+      emitLine();
+      line = tok.trimStart();
+      ti++;
+      continue;
+    }
+    line += tok;
+    ti++;
+  }
+  if (line.trim()) {
+    if (st.y + lh > BOTTOM) {
+      flushChunk();
+      if (!nextSlot(st)) return { remaining: line };
+      chunkStartY = st.y; chunkCol = st.col;
+    }
+    let seg = currentSeg(st, lh);
+    if (!seg || seg.w < 90) {
+      const jy = jumpY(st);
+      if (jy != null && jy < BOTTOM) st.y = jy;
+      seg = currentSeg(st, lh);
+    }
+    if (seg && seg.w >= 90) emitLine();
+    else return { remaining: line };
+  }
+  flushChunk();
+  st.y += 12 * s;
+  return null;
+}
+
+
+function flowSectionHeading(st, b, idx, kind) {
+  const s = st.s;
+  const col = colRect(st);
+  const colW = col.w;
+  const isSection = kind === 'section';
+  const size = (isSection ? 32 : 34) * s;
+  const fnt = font(size, 900);
+  const lh = size * (isSection ? 1.5 : 1.45);
+  const lines = wrapText(b.text, fnt, colW - (isSection ? 40 * s : 22 * s), st.measure);
+  const boxH = isSection ? lines.length * lh + 22 * s : lines.length * lh;
+  const need = isSection ? boxH + 4 * st.bodyLH : boxH + 2 * st.bodyLH;
+  if (!jumpPastObstacles(st, boxH)) {
+    if (!nextSlot(st)) return false;
+  }
+  const top = atTop(st) ? 0 : (isSection ? 34 * s : 26 * s);
+  if (st.y + top + need > BOTTOM) {
+    if (!nextSlot(st)) return false;
+    jumpPastObstacles(st, boxH);
+  }
+  st.y += top;
+  if (isSection) {
+    st.page.frames.push({ id: nextId(st, 'heading'), type: 'heading', x: col.x, y: st.y, w: colW, h: boxH, blockIndex: idx });
+    st.page.ops.push({ op: 'rect', x: col.x, y: st.y, w: colW, h: boxH, fill: COLORS.navy });
+    let ty = st.y + 11 * s;
+    for (const ln of lines) {
+      st.page.ops.push({ op: 'text', x: col.x + 20 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: fnt, color: '#ffffff' });
+      ty += lh;
+    }
+    st.y += boxH + 22 * s;
+  } else {
+    st.page.frames.push({ id: nextId(st, 'heading'), type: 'heading', x: col.x, y: st.y, w: colW, h: boxH, blockIndex: idx });
+    st.page.ops.push({ op: 'rect', x: col.x, y: st.y + lh * 0.18, w: 7 * s, h: lines.length * lh - lh * 0.36, fill: COLORS.goldLight });
+    if (st.spec.timeline && st.railX != null) {
+      st.page.ops.push({ op: 'rect', x: st.railX - 4, y: st.y + lh * 0.4, w: 12, h: 12, fill: COLORS.gold });
+    }
+    let ty = st.y;
+    for (const ln of lines) {
+      st.page.ops.push({ op: 'text', x: col.x + 22 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: fnt, color: COLORS.navy });
+      ty += lh;
+    }
+    st.y += boxH + 8 * s;
+  }
+  return true;
+}
+
+
+function flowByline(st, b, idx) {
+  const s = st.s;
+  const col = colRect(st);
+  const quoteMode = !!st.spec.quote;
+  const size = st.bodySize;
+  const fnt = font(size, 700);
+  const lh = st.bodyLH;
+  const lines = wrapText(b.text, fnt, col.w, st.measure);
+  const total = lines.length * lh;
+  if (!jumpPastObstacles(st, total)) {
+    if (!nextSlot(st)) return false;
+  }
+  if (st.y + total > BOTTOM) {
+    if (!nextSlot(st)) return false;
+  }
+  const frameY = st.y;
+  if (quoteMode) {
+    st.page.ops.push({ op: 'line', x1: col.x + col.w * 0.2, y1: st.y, x2: col.x + col.w * 0.8, y2: st.y, color: COLORS.goldLight, width: 3 });
+    st.y += 18 * s;
+  }
+  st.page.frames.push({ id: nextId(st, 'text'), type: 'text', x: col.x, y: frameY, w: col.w, h: quoteMode ? total + 36 * s : total, blockIndex: idx });
+  for (const ln of lines) {
+    st.page.ops.push({ op: 'text', x: col.x + col.w, y: st.y + (lh + size * 0.72) / 2, text: ln, font: fnt, color: COLORS.gold, align: 'right' });
+    st.y += lh;
+  }
+  if (quoteMode) {
+    st.page.ops.push({ op: 'line', x1: col.x + col.w * 0.2, y1: st.y + 6 * s, x2: col.x + col.w * 0.8, y2: st.y + 6 * s, color: COLORS.goldLight, width: 3 });
+    st.y += 18 * s;
+  }
+  st.y += 10 * s;
+  return true;
+}
+
+
+function flowNote(st, b, idx) {
+  const s = st.s;
+  const col = colRect(st);
+  const fnt = font(24 * s, 700);
+  const lh = 24 * s * 1.6;
+  const lines = wrapText(b.text, fnt, col.w, st.measure);
+  const total = lines.length * lh + 30 * s;
+  if (!jumpPastObstacles(st, total)) {
+    if (!nextSlot(st)) return false;
+  }
+  if (st.y + total > BOTTOM) {
+    if (!nextSlot(st)) return false;
+  }
+  const frameY = st.y;
+  st.y += 14 * s;
+  st.page.ops.push({ op: 'line', x1: col.x, y1: st.y, x2: col.x + col.w, y2: st.y, color: COLORS.line, width: 2 });
+  st.y += 10 * s;
+  st.page.frames.push({ id: nextId(st, 'note'), type: 'note', x: col.x, y: frameY, w: col.w, h: total, blockIndex: idx });
+  for (const ln of lines) {
+    st.page.ops.push({ op: 'text', x: col.x, y: st.y + (lh + 24 * s * 0.72) / 2, text: ln, font: fnt, color: COLORS.gold });
+    st.y += lh;
+  }
+  return true;
+}
+
+
+function placeFigure(st, b, idx) {
+  const s = st.s;
+  let col = colRect(st);
+  const colW = col.w;
+  const spec = st.spec;
+  const mode = spec.photo;
+  const sz = sizeOf(st.imageSize, b.photoId);
+  const isWrap = mode === 'alternate' || mode === 'right';
+  const isBanner = mode === 'banner';
+  const isCard = mode === 'card';
+  let w = colW;
+  let h = 200 * s;
+  let ix = col.x;
+  let iy = st.y;
+  if (isBanner) {
+    w = colW; h = Math.min((w * sz.h) / sz.w, 360 * s); ix = col.x; iy = st.y;
+  } else if (isCard) {
+    w = colW - 32 * s; h = Math.min((w * sz.h) / sz.w, 420 * s); ix = col.x + 16 * s; iy = st.y;
+  } else if (isWrap) {
+    w = colW * (mode === 'right' ? 0.38 : 0.52);
+    h = (w * sz.h) / sz.w;
+    if (h > 420 * s) { h = 420 * s; w = (h * sz.w) / sz.h; }
+    const left = mode === 'right' ? false : (st.figIndex % 2 === 0);
+    ix = left ? col.x : col.x + colW - w; iy = st.y;
+    const ov = st.obstacles.filter((o) => o.y < iy + 20 && o.y + o.h > iy && o.x < col.x + colW && o.x + o.w > col.x);
+    if (ov.length) iy = Math.max.apply(null, ov.map((o) => o.y + o.h)) + 18 * s;
+  } else {
+    w = colW * (spec.photoW || 1); if (w > colW) w = colW;
+    h = (w * sz.h) / sz.w;
+    const maxH = (BOTTOM - TOP_OTHER) * (mode === 'top' ? 0.30 : 0.42);
+    if (h > maxH) { h = maxH; w = (h * sz.w) / sz.h; }
+    ix = col.x + (colW - w) / 2; iy = st.y;
+  }
+  const cf = font(21 * s);
+  const capW = isWrap ? w : (isCard ? colW - 32 * s : w);
+  const capLines = b.caption ? wrapText(b.caption, cf, capW, st.measure) : [];
+  const capH = capLines.length * 21 * s * 1.5;
+  const capSpace = capH ? capH + 10 * s : 0;
+  const cardExtra = isCard ? 48 * s : 0;
+  const total = h + capSpace + cardExtra;
+  const pad = 18 * s;
+  const minH = 180 * s;
+  const roomFor = (y) => BOTTOM - y - capSpace - cardExtra - pad;
+  const moveToNext = () => {
+    if (!nextSlot(st)) return false;
+    col = colRect(st);
+    iy = st.y;
+    const cw = col.w;
+    if (isBanner) { w = cw; h = Math.min((w * sz.h) / sz.w, 360 * s); ix = col.x; }
+    else if (isCard) { w = cw - 32 * s; h = Math.min((w * sz.h) / sz.w, 420 * s); ix = col.x + 16 * s; }
+    else if (isWrap) {
+      const left = mode === 'right' ? false : (st.figIndex % 2 === 0);
+      ix = left ? col.x : col.x + cw - w;
+    } else ix = col.x + (cw - w) / 2;
+    return true;
+  };
+  if (iy + total + pad > BOTTOM) {
+    if (roomFor(iy) < minH && (st.y > col.y + 0.5 || st.col < st.cols.length - 1)) {
+      if (!moveToNext()) return 'pageFull';
+    }
+    if (iy + h + capSpace + cardExtra + pad > BOTTOM) {
+      const room = roomFor(iy);
+      if (room >= minH) h = room;
+      else if (st.y > col.y + 0.5 || st.col < st.cols.length - 1) {
+        if (!moveToNext()) return 'pageFull';
+        if (iy + h + capSpace + cardExtra + pad > BOTTOM) {
+          const room2 = roomFor(iy);
+          if (room2 < 80 * s) return 'pageFull';
+          h = room2;
+        }
+      } else if (room >= 80 * s) h = room;
+      else return 'pageFull';
+    }
+  }
+  const effTotal = h + (capH ? capH + 10 * s : 0) + (isCard ? 48 * s : 0);
+  if (isCard) {
+    st.page.ops.push({ op: 'rect', x: col.x, y: iy, w: colW, h: effTotal, fill: COLORS.paper });
+  }
+  const imgFrame = { id: nextId(st, 'image'), type: 'image', x: ix, y: iy, w: w, h: h, locked: false, photoId: b.photoId, fit: (isCard || isBanner) ? 'cover' : 'contain', blockIndex: idx };
+  st.page.frames.push(imgFrame);
+  st.page.ops.push({ op: 'image', photoId: b.photoId, x: ix, y: iy, w: w, h: h, fit: imgFrame.fit, radius: 6 });
+  if (capLines.length) {
+    const cy = iy + h + 10 * s;
+    st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: isWrap ? ix : col.x, y: cy, w: isWrap ? w : colW, h: capH, locked: false, photoId: b.photoId, blockIndex: idx });
+    for (let i = 0; i < capLines.length; i++) {
+      if (isWrap) st.page.ops.push({ op: 'text', x: ix, y: cy + i * 21 * s * 1.5 + 21 * s, text: capLines[i], font: cf, color: COLORS.gray });
+      else st.page.ops.push({ op: 'text', x: col.x + colW / 2, y: cy + i * 21 * s * 1.5 + 21 * s, text: capLines[i], font: cf, color: COLORS.gray, align: 'center' });
+    }
+  }
+  const wrapPad = 16 * s;
+  const leftFig = isWrap && ix <= col.x + 1;
+  st.obstacles.push({
+    x: isWrap ? (leftFig ? ix : ix - wrapPad) : col.x,
+    y: iy,
+    w: isWrap ? w + wrapPad : col.w,
+    h: effTotal + 8 * s,
+  });
+  if (isWrap) st.y = iy;
+  else st.y = iy + effTotal + pad;
+  st.figIndex++;
+  return 'done';
+}
+
+
+function placeFigurePair(st, b1, b2, idx1, idx2) {
+  const s = st.s;
+  const gap = 24;
+  let col = colRect(st);
+  const w = (col.w - gap) / 2;
+  const sz1 = sizeOf(st.imageSize, b1.photoId);
+  const sz2 = sizeOf(st.imageSize, b2.photoId);
+  let h1 = Math.min((w * sz1.h) / sz1.w, 380 * s);
+  let h2 = Math.min((w * sz2.h) / sz2.w, 380 * s);
+  const cf = font(21 * s);
+  const c1 = b1.caption ? wrapText(b1.caption, cf, w, st.measure) : [];
+  const c2 = b2.caption ? wrapText(b2.caption, cf, w, st.measure) : [];
+  const ch1 = c1.length * 21 * s * 1.5;
+  const ch2 = c2.length * 21 * s * 1.5;
+  let rowH = Math.max(h1 + (ch1 ? ch1 + 10 * s : 0), h2 + (ch2 ? ch2 + 10 * s : 0));
+  const pad = 18 * s;
+  let y0 = st.y;
+  const capMax = Math.max(ch1, ch2);
+  const capPair = capMax ? capMax + 10 * s : 0;
+  const minRow = 180 * s + capPair;
+  if (y0 + rowH + pad > BOTTOM) {
+    if (BOTTOM - y0 - pad < minRow && !atTop(st)) {
+      if (!nextSlot(st)) return 'pageFull';
+      col = colRect(st); y0 = col.y;
+    }
+    if (y0 + rowH + pad > BOTTOM) {
+      const room = BOTTOM - y0 - pad - capPair;
+      if (room < 80 * s) return 'pageFull';
+      h1 = room; h2 = room;
+      rowH = h1 + capPair;
+    }
+  }
+  const items = [[b1, idx1, col.x, h1, c1], [b2, idx2, col.x + w + gap, h2, c2]];
+  for (const it of items) {
+    const bb = it[0]; const bi = it[1]; const xx = it[2]; const hh = it[3]; const caps = it[4];
+    st.page.frames.push({ id: nextId(st, 'image'), type: 'image', x: xx, y: y0, w: w, h: hh, locked: false, photoId: bb.photoId, fit: 'cover', blockIndex: bi });
+    st.page.ops.push({ op: 'image', photoId: bb.photoId, x: xx, y: y0, w: w, h: hh, fit: 'cover', radius: 6 });
+    if (caps.length) {
+      const cy = y0 + hh + 10 * s;
+      st.page.frames.push({ id: nextId(st, 'caption'), type: 'caption', x: xx, y: cy, w: w, h: caps.length * 21 * s * 1.5, locked: false, photoId: bb.photoId, blockIndex: bi });
+      for (let i = 0; i < caps.length; i++) st.page.ops.push({ op: 'text', x: xx, y: cy + i * 21 * s * 1.5 + 21 * s, text: caps[i], font: cf, color: COLORS.gray });
+    }
+  }
+  st.obstacles.push({ x: col.x, y: y0, w: col.w, h: rowH });
+  st.y = y0 + rowH + pad;
+  st.figIndex += 2;
+  return 'done';
+}
+
+
+function flowOnePage(st, blocks, startIdx) {
+  let idx = startIdx;
+  while (idx < blocks.length) {
+    const b = blocks[idx];
+    if (!b || b.type === 'video') { idx++; continue; }
+    if (b.type === 'figure' && st.spec.photo === 'grid' && idx + 1 < blocks.length && blocks[idx + 1].type === 'figure') {
+      const r = placeFigurePair(st, b, blocks[idx + 1], idx, idx + 1);
+      if (r === 'pageFull') break;
+      idx += 2; continue;
+    }
+    if (b.type === 'figure') {
+      const r = placeFigure(st, b, idx);
+      if (r === 'pageFull') break;
+      idx++; continue;
+    }
+    if (b.type === 'para') {
+      const r = flowPara(st, b, idx);
+      if (r && r.remaining != null && r.remaining.trim()) { blocks[idx] = { ...b, text: r.remaining }; break; }
+      idx++; continue;
+    }
+    if (b.type === 'section') { if (!flowSectionHeading(st, b, idx, 'section')) break; idx++; continue; }
+    if (b.type === 'heading') { if (!flowSectionHeading(st, b, idx, 'heading')) break; idx++; continue; }
+    if (b.type === 'byline') { if (!flowByline(st, b, idx)) break; idx++; continue; }
+    if (b.type === 'note') { if (!flowNote(st, b, idx)) break; idx++; continue; }
+    const r = flowPara(st, { ...b, text: String(b.text ?? '') }, idx);
+    if (r && r.remaining != null && r.remaining.trim()) { blocks[idx] = { ...b, text: r.remaining }; break; }
+    idx++;
+  }
+  return idx;
+}
+
+
 /**
  * input: {
  *   data: { title, kicker }, metaLine, cover: { photoId, caption } | null, blocks,
- *   layout: 'classic'|'alternate'|'columns', scale, measure, imageSize(photoId) → {w,h}|null
+ *   layout: 'classic'|'alternate'|'columns'|...（見 LAYOUTS）, scale, measure, imageSize(photoId) → {w,h}|null
  * }
- * 回傳 { pages: [{ ops: [...] }] }
+ * 回傳 { pages: [{ index, frames: [{ id, type, x, y, w, h, locked?, photoId?, blockIndex? }], ops: [...] }] }
  */
 /**
  * header：false 時是接續頁（A4 自訂每頁內容的第 2 頁以後）：不畫大標題、meta 與主圖，從頁面上方直接排內文
  */
 export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', scale = 1, measure, imageSize, header = true }) {
-  const s = scale;
-  const CW = A4.width - 2 * MARGIN;
-  const pages = [{ ops: [] }];
-  let ops = pages[0].ops;
-  let y = header ? TOP_FIRST : TOP_OTHER;
-  const sizeOf = (id) => imageSize(id) || { w: 4, h: 3 };
-  if (!header) {
-    data = { ...data, kicker: '', title: '' };
-    metaLine = '';
-    cover = null;
-  }
-
-  // ---- 第一頁頂部（全寬）：肩題、標題、meta、細線、主圖 ----
-  if (data.kicker) {
-    const f = font(24 * s, 700);
-    ops.push({ op: 'text', x: MARGIN, y: y + 24 * s, text: data.kicker, font: f, color: COLORS.gold });
-    y += 24 * s + 18 * s;
-  }
-  const tf = font(54 * s, 900);
-  for (const ln of data.title ? wrapText(data.title, tf, CW, measure) : []) {
-    ops.push({ op: 'text', x: MARGIN, y: y + 54 * s, text: ln, font: tf, color: COLORS.navy });
-    y += 54 * s * 1.35;
-  }
-  if (header) {
-    y += 10 * s;
-    const mf = font(23 * s);
-    for (const ln of wrapText(metaLine, mf, CW, measure)) {
-      ops.push({ op: 'text', x: MARGIN, y: y + 23 * s, text: ln, font: mf, color: COLORS.gray });
-      y += 23 * s * 1.6;
-    }
-    y += 14 * s;
-    ops.push({ op: 'line', x1: MARGIN, y1: y, x2: MARGIN + CW, y2: y, color: COLORS.line, width: 2 });
-    y += 30 * s;
-  }
-  if (cover) {
-    const sz = sizeOf(cover.photoId);
-    const h = Math.min((CW * sz.h) / sz.w, 640 * s);
-    ops.push({ op: 'image', photoId: cover.photoId, x: MARGIN, y, w: CW, h, fit: 'cover', radius: 8 });
-    y += h + 12 * s;
-    if (cover.caption) {
-      const cf = font(21 * s);
-      for (const ln of wrapText(cover.caption, cf, CW, measure)) {
-        ops.push({ op: 'text', x: MARGIN + CW / 2, y: y + 21 * s, text: ln, font: cf, color: COLORS.gray, align: 'center' });
-        y += 21 * s * 1.5;
-      }
-    }
-    y += 22 * s;
-  }
-
-  // ---- 內文：單欄或雙欄 ----
-  const ncol = layout === 'columns' ? 2 : 1;
-  const gap = 44;
-  const colW = ncol === 2 ? (CW - gap) / 2 : CW;
-  let col = 0;
-  let colTop = y;
-  const colX = () => MARGIN + col * (colW + gap);
-  const atTop = () => y <= colTop + 0.5;
-  function nextSlot() {
-    if (col < ncol - 1) {
-      col++;
-      y = colTop;
-      return;
-    }
-    pages.push({ ops: [] });
-    ops = pages[pages.length - 1].ops;
-    col = 0;
-    colTop = TOP_OTHER;
-    y = TOP_OTHER;
-  }
-  const fits = (h) => y + h <= BOTTOM;
-
-  const bodySize = 27 * s;
+  const s = scale || 1;
+  const spec = specFor(layout);
+  const m = measure || fallbackMeasure;
+  const imgSize = imageSize || (() => ({ w: 4, h: 3 }));
+  const d = data || {};
+  const list = Array.isArray(blocks) ? blocks.map((b) => ({ ...b })) : [];
+  const bodySize = (spec.columns === 3 ? 24 : 27) * s * (spec.bodyScale || 1);
   const bodyLH = bodySize * 1.8;
   const bf = font(bodySize);
-  let figIndex = 0;
-
-  function textLines(lines, fnt, size, lh, color, align = 'left', indentX = 0) {
-    for (const ln of lines) {
-      if (!fits(lh)) nextSlot();
-      const x = align === 'right' ? colX() + colW : colX() + indentX;
-      ops.push({ op: 'text', x, y: y + (lh + size * 0.72) / 2, text: ln, font: fnt, color, align });
-      y += lh;
-    }
-  }
-
-  for (const b of blocks) {
-    if (b.type === 'section') {
-      // 單位標題：深藍底白字橫條，佔整欄寬；後面至少要放得下兩行內文，否則換欄／換頁
-      const size = 32 * s;
-      const sf = font(size, 900);
-      const lines = wrapText(b.text, sf, colW - 40 * s, measure);
-      const lh = size * 1.5;
-      const boxH = lines.length * lh + 22 * s;
-      const top = atTop() ? 0 : 34 * s;
-      if (!fits(top + boxH + 4 * bodyLH)) nextSlot();
-      else y += top;
-      ops.push({ op: 'rect', x: colX(), y, w: colW, h: boxH, fill: COLORS.navy });
-      let ty = y + 11 * s;
-      for (const ln of lines) {
-        ops.push({ op: 'text', x: colX() + 20 * s, y: ty + (lh + size * 0.72) / 2, text: ln, font: sf, color: '#ffffff' });
-        ty += lh;
-      }
-      y += boxH + 22 * s;
-    } else if (b.type === 'heading') {
-      const size = 34 * s;
-      const hf = font(size, 900);
-      const lines = wrapText(b.text, hf, colW - 22 * s, measure);
-      const lh = size * 1.45;
-      const top = atTop() ? 0 : 26 * s;
-      if (!fits(top + lines.length * lh + 2 * bodyLH)) nextSlot();
-      else y += top;
-      ops.push({ op: 'rect', x: colX(), y: y + lh * 0.18, w: 7 * s, h: lines.length * lh - lh * 0.36, fill: COLORS.goldLight });
-      textLines(lines, hf, size, lh, COLORS.navy, 'left', 22 * s);
-      y += 8 * s;
-    } else if (b.type === 'para') {
-      textLines(wrapText(b.text, bf, colW, measure), bf, bodySize, bodyLH, COLORS.text);
-      y += 12 * s;
-    } else if (b.type === 'byline') {
-      const f = font(25 * s, 700);
-      textLines(wrapText(b.text, f, colW, measure), f, 25 * s, 25 * s * 1.7, COLORS.gold, 'right');
-      y += 10 * s;
-    } else if (b.type === 'figure') {
-      const sz = sizeOf(b.photoId);
-      const side = layout === 'alternate';
-      const maxH = (BOTTOM - TOP_OTHER) * (side ? 0.32 : 0.42) * Math.min(1, s + 0.1);
-      let w = (side ? colW * 0.6 : colW) * Math.min(1, s);
-      let h = (w * sz.h) / sz.w;
-      if (h > maxH) {
-        h = maxH;
-        w = (h * sz.w) / sz.h;
-      }
-      const cf = font(21 * s);
-      const capW = side ? colW - w - 28 * s : w;
-      const capLines = b.caption ? wrapText(b.caption, cf, capW, measure) : [];
-      const capH = capLines.length * 21 * s * 1.5;
-      const total = side ? Math.max(h, capH) : h + (capH ? capH + 10 * s : 0);
-      const pad = 18 * s;
-      if (!fits(pad + total + pad) && !atTop()) nextSlot();
-      if (!atTop()) y += pad;
-      const left = !side || figIndex % 2 === 0;
-      const ix = side ? (left ? colX() : colX() + colW - w) : colX() + (colW - w) / 2;
-      ops.push({ op: 'image', photoId: b.photoId, x: ix, y, w, h, fit: 'contain', radius: 6 });
-      if (side) {
-        const cx = left ? colX() + w + 28 * s : colX();
-        let cy = y + Math.max(0, (h - capH) / 2);
-        for (const ln of capLines) {
-          ops.push({ op: 'text', x: cx, y: cy + 21 * s, text: ln, font: cf, color: COLORS.gray });
-          cy += 21 * s * 1.5;
-        }
-      } else {
-        let cy = y + h + 10 * s;
-        for (const ln of capLines) {
-          ops.push({ op: 'text', x: colX() + colW / 2, y: cy + 21 * s, text: ln, font: cf, color: COLORS.gray, align: 'center' });
-          cy += 21 * s * 1.5;
+  const pages = [];
+  let idx = 0;
+  let pageIndex = 0;
+  while (idx < list.length || pageIndex === 0) {
+    if (pageIndex > 200) break;
+    const isFirst = pageIndex === 0;
+    const page = { index: pageIndex, frames: [], ops: [] };
+    pages.push(page);
+    const yAfter = buildHeader(page, d, metaLine || '', cover, spec, s, m, imgSize, header && isFirst, pageIndex);
+    const geom = geometryFor(spec, yAfter);
+    if (spec.sidebar) {
+      const sbY = yAfter;
+      const sbH = Math.max(0, BOTTOM - sbY);
+      if (sbH > 40) {
+        page.frames.push({ id: 'p' + pageIndex + '-note-sidebar', type: 'note', x: MARGIN, y: sbY, w: 240, h: sbH, locked: true });
+        page.ops.push({ op: 'rect', x: MARGIN, y: sbY, w: 240, h: sbH, fill: COLORS.paper });
+        page.ops.push({ op: 'line', x1: MARGIN + 240, y1: sbY, x2: MARGIN + 240, y2: BOTTOM, color: COLORS.line, width: 2 });
+        const sections = list.filter((b) => b.type === 'section').map((b) => b.text);
+        const sf = font(22 * s, 700);
+        let sy = sbY + 24 * s;
+        page.ops.push({ op: 'text', x: MARGIN + 16, y: sy + 22 * s, text: '本期要目', font: sf, color: COLORS.navy });
+        sy += 22 * s * 1.6 + 10 * s;
+        const tf2 = font(21 * s);
+        for (const t of sections) {
+          for (const ln of wrapText(t, tf2, 208, m)) {
+            if (sy + 21 * s * 1.5 > BOTTOM) break;
+            page.ops.push({ op: 'text', x: MARGIN + 16, y: sy + 21 * s, text: ln, font: tf2, color: COLORS.gray });
+            sy += 21 * s * 1.5;
+          }
         }
       }
-      y += total + pad;
-      figIndex++;
-    } else if (b.type === 'note') {
-      const f = font(24 * s, 700);
-      const lh = 24 * s * 1.6;
-      if (!fits(lh + 30 * s)) nextSlot();
-      y += 14 * s;
-      ops.push({ op: 'line', x1: colX(), y1: y, x2: colX() + colW, y2: y, color: COLORS.line, width: 2 });
-      y += 10 * s;
-      textLines(wrapText(b.text, f, colW, measure), f, 24 * s, lh, COLORS.gold, 'left');
     }
+    if (spec.timeline && geom.railX != null) {
+      page.ops.push({ op: 'line', x1: geom.railX, y1: yAfter, x2: geom.railX, y2: BOTTOM, color: COLORS.line, width: 3 });
+    }
+    if (yAfter > BOTTOM) {
+      pageIndex++;
+      if (idx >= list.length) break;
+      continue;
+    }
+    const st = makeState(page, spec, geom.cols, { s, measure: m, imageSize: imgSize, pageIndex, bodySize, bodyLH, bf, railX: geom.railX });
+    const framesBefore = page.frames.length;
+    const roomy = BOTTOM - (geom.cols[0] ? geom.cols[0].y : TOP_OTHER) >= 200;
+    const nextIdx = flowOnePage(st, list, idx);
+    if (nextIdx > idx) idx = nextIdx;
+    else if (idx < list.length && page.frames.length === framesBefore && roomy) idx++;
+    pageIndex++;
+    if (idx >= list.length) break;
   }
   return { pages };
+}
+
+
+/**
+ * reflowPage(page, frames, ctx)
+ * page: layoutA4 回傳的某一頁（或含 blocks / sourceBlocks 的頁物件）；frames: 使用者改過位置／大小後的新固定框陣列
+ * （type 為 title/meta/image/caption 的框，及 blockIndex 為空的 note 框；text/heading/note 流排框會被重新產生，不必傳入）。
+ * ctx: { measure, imageSize, scale, layout, data, metaLine, cover, blocks }
+ * 回傳 { page: { index, frames, ops }, overflow: [未排完的區塊，para 會是剩餘文字], pages: [page] }。
+ * 固定框一律視為障礙物，內文逐行在欄位減去障礙物的可用段落裡重排；排不下的文字以 overflow 交給下一頁。
+ */
+export function reflowPage(page, frames, ctx) {
+  const c = ctx || {};
+  const s = c.scale || 1;
+  const spec = specFor(c.layout || page.layout || 'classic');
+  const m = c.measure || fallbackMeasure;
+  const imgSize = c.imageSize || (() => ({ w: 4, h: 3 }));
+  const blocksSrc = page.blocks || page.sourceBlocks || c.blocks || [];
+  const list = blocksSrc.filter((b) => b && b.type !== 'figure' && b.type !== 'video').map((b) => ({ ...b }));
+  const fixed = (frames || page.frames || []).filter((f) => f && (f.type === 'title' || f.type === 'meta' || f.type === 'image' || f.type === 'caption' || (f.type === 'note' && f.blockIndex == null)));
+  let top = (page.index || 0) === 0 ? TOP_FIRST : TOP_OTHER;
+  const headerFrames = fixed.filter((f) => f.type === 'title' || f.type === 'meta' || (((f.type === 'image') || (f.type === 'caption')) && f.blockIndex == null && !(f.type === 'image' && f.h > 1500)));
+  if (headerFrames.length) top = Math.max.apply(null, headerFrames.map((f) => f.y + f.h)) + 22 * s;
+  if (top > BOTTOM) top = BOTTOM + 1;
+  const newPage = { index: page.index || 0, frames: [...fixed], ops: [] };
+  const data = c.data || page.data || {};
+  const metaLine = c.metaLine || page.metaLine || '';
+  const cover = c.cover || page.cover || null;
+  for (const f of fixed) {
+    if (f.type === 'image') {
+      newPage.ops.push({ op: 'image', photoId: f.photoId, x: f.x, y: f.y, w: f.w, h: f.h, fit: f.fit || 'cover', radius: 8 });
+    } else if (f.type === 'title') {
+      const tf = font(54 * s * (spec.titleScale || 1), 900);
+      const lines = data.title ? wrapText(data.title, tf, f.w, m) : [];
+      const lh = 54 * s * 1.35;
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * lh + 54 * s, text: ln, font: tf, color: COLORS.navy }); });
+    } else if (f.type === 'meta') {
+      const isKicker = f.id && String(f.id).includes('kicker');
+      const txt = isKicker ? (data.kicker || '') : metaLine;
+      const ff = font(isKicker ? 24 * s : 23 * s, isKicker ? 700 : 400);
+      const lines = txt ? wrapText(txt, ff, f.w, m) : [];
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x, y: f.y + i * (isKicker ? 42 * s : 36 * s) + (isKicker ? 24 * s : 23 * s), text: ln, font: ff, color: isKicker ? COLORS.gold : COLORS.gray }); });
+    } else if (f.type === 'caption') {
+      let cap = '';
+      if (cover && cover.photoId === f.photoId) cap = cover.caption || '';
+      else { const fb = list.find((b) => b.photoId === f.photoId); if (fb) cap = fb.caption || ''; }
+      const cf = font(21 * s);
+      const lines = cap ? wrapText(cap, cf, f.w, m) : [];
+      lines.forEach((ln, i) => { newPage.ops.push({ op: 'text', x: f.x + f.w / 2, y: f.y + i * 21 * s * 1.5 + 21 * s, text: ln, font: cf, color: COLORS.gray, align: 'center' }); });
+    } else if (f.type === 'note') {
+      newPage.ops.push({ op: 'rect', x: f.x, y: f.y, w: f.w, h: f.h, fill: COLORS.paper });
+    }
+  }
+  if (top > BOTTOM || !list.length) return { page: newPage, overflow: [], pages: [newPage] };
+  const geom = geometryFor(spec, top);
+  const bodySize = (spec.columns === 3 ? 24 : 27) * s * (spec.bodyScale || 1);
+  const st = makeState(newPage, spec, geom.cols, { s, measure: m, imageSize: imgSize, pageIndex: newPage.index, bodySize, bodyLH: bodySize * 1.8, bf: font(bodySize), railX: geom.railX, seq: fixed.length });
+  for (const f of fixed) {
+    if (f.type === 'image' || f.type === 'caption' || f.type === 'title' || f.type === 'meta') st.obstacles.push({ x: f.x, y: f.y, w: f.w, h: f.h });
+  }
+  const nextIdx = flowOnePage(st, list, 0);
+  const overflow = list.slice(nextIdx);
+  return { page: newPage, overflow, pages: [newPage] };
+}
+
+
+/** 版型切換預覽：同步純函式，直接用新 layoutId 重排、重畫，不必再按「一鍵生成」。 */
+export function previewLayout(input, layoutId) {
+  return layoutA4({ ...input, layout: layoutId });
 }

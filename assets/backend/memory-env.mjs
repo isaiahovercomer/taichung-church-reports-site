@@ -150,8 +150,43 @@ export function createMemoryEnv(opts = {}) {
     },
     listOutputs: (aid) => structuredClone(state.outputs[aid] || []),
     addOutput(aid, rec) {
+      if (!state.outputs[aid]) state.outputs[aid] = [];
       state.outputs[aid].push(structuredClone(rec));
       changed();
+    },
+    updateOutput(aid, rec) {
+      const list = state.outputs[aid] || [];
+      const i = list.findIndex((o) => o.id === rec.id);
+      if (i >= 0) list[i] = structuredClone(rec);
+      changed();
+    },
+    saveBinaryFile(aid, f) {
+      return store.saveFile(aid, f);
+    },
+    readTextFile(fileId) {
+      for (const files of Object.values(state.files)) {
+        const f = files[fileId];
+        if (!f) continue;
+        if (f.text != null) return f.text;
+        if (f.base64) {
+          try {
+            return new TextDecoder().decode(Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)));
+          } catch {
+            return f.base64;
+          }
+        }
+        return '';
+      }
+      return null;
+    },
+    findPublicOutput(publicId) {
+      if (!publicId) return null;
+      for (const [aid, list] of Object.entries(state.outputs)) {
+        for (const rec of list || []) {
+          if (rec.publicId === publicId && rec.published) return { actionId: aid, output: structuredClone(rec) };
+        }
+      }
+      return null;
     },
   };
 

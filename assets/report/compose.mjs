@@ -2,7 +2,7 @@
 // 再轉成 Markdown（給 render.mjs 生網頁）或交給 A4 排版（a4-layout.mjs）。
 // 純函式，不碰 DOM，Node 單元測試可直接 import。
 
-import { countChars } from './summarizer.mjs?v=e43b49d580';
+import { countChars } from './summarizer.mjs?v=90ad9fd72a';
 
 /** 單一素材的照片順序：主圖 → 有圖說 → 其他（同級維持原順序） */
 export function orderPhotos(photos = []) {
@@ -125,7 +125,7 @@ export async function composeReport({ action, materials: input, settings, summar
     const myVideos = videos.filter((v) => v.materialId === m.id);
     if (sectionAt.has(m.id)) blocks.push({ type: 'section', text: sectionAt.get(m.id) });
     if (!sec.paragraphs.length && !myPhotos.length && !myVideos.length) return;
-    blocks.push({ type: 'heading', text: m.title, kind: m.kind, materialId: m.id });
+    if (m.title) blocks.push({ type: 'heading', text: m.title, kind: m.kind, materialId: m.id });
     // 照片穿插在段落之間：第 1 段後、第 2 段後…，剩下的放在最後
     const queue = [...myPhotos];
     sec.paragraphs.forEach((p) => {
