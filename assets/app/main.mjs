@@ -6,19 +6,19 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=90ad9fd72a';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=90ad9fd72a';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=90ad9fd72a';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=90ad9fd72a';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=90ad9fd72a';
-import { LAYOUTS, previewLayout } from '../report/a4-layout.mjs?v=90ad9fd72a';
-import { buildPdf } from '../report/pdf.mjs?v=90ad9fd72a';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=90ad9fd72a';
-import { createTour } from './tour.mjs?v=90ad9fd72a';
-import { helpView } from './help.mjs?v=90ad9fd72a';
-import { createPhotoLoader } from './photos.mjs?v=90ad9fd72a';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=90ad9fd72a';
-import { createSnapshot } from './snapshot.mjs?v=90ad9fd72a';
+import { ApiError, createApi, detectMode } from './api.mjs?v=23e087298e';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=23e087298e';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=23e087298e';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=23e087298e';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=23e087298e';
+import { LAYOUTS, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=23e087298e';
+import { buildPdf } from '../report/pdf.mjs?v=23e087298e';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=23e087298e';
+import { createTour } from './tour.mjs?v=23e087298e';
+import { helpView } from './help.mjs?v=23e087298e';
+import { createPhotoLoader } from './photos.mjs?v=23e087298e';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=23e087298e';
+import { createSnapshot } from './snapshot.mjs?v=23e087298e';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 
@@ -176,7 +176,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=90ad9fd72a', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=23e087298e', import.meta.url))).text();
   return cssText;
 }
 
@@ -758,8 +758,7 @@ function settingsControls(initial) {
   };
   const sharedRows = Object.keys(sharedLabels).map((key) => makeRow(inputs, key, sharedLabels[key][0], sharedLabels[key][1]));
   const a4Rows = Object.keys(a4Labels).map((key) => makeRow(a4Inputs, key, a4Labels[key][0], a4Labels[key][1]));
-  const layoutIds = LAYOUTS.map((l) => l.id);
-  const available = (me.layouts && me.layouts.length ? me.layouts : layoutIds).filter((id, i, arr) => arr.indexOf(id) === i);
+  const available = selectableLayoutIds(me.layouts);
   const layoutThumb = (id) => new URL(`../brand/layouts/${id}.webp`, import.meta.url).href;
   const layoutGroup = h(
     'fieldset',

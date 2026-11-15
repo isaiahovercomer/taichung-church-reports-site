@@ -68,21 +68,46 @@ export const LAYOUTS = [
 
 
 const LAYOUT_SPECS = {
-  classic: { columns: 1, photo: 'center', photoW: 1, cover: 'normal', titleScale: 1 },
-  alternate: { columns: 1, photo: 'alternate', photoW: 0.52, cover: 'normal', titleScale: 1 },
-  columns: { columns: 2, photo: 'center', photoW: 1, cover: 'normal', titleScale: 1 },
-  magazine: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'hero', titleScale: 1.08 },
-  wrap2: { columns: 2, photo: 'alternate', photoW: 0.58, cover: 'normal', titleScale: 1 },
-  collage: { columns: 1, photo: 'grid', photoW: 0.5, cover: 'normal', titleScale: 1 },
-  tri: { columns: 3, photo: 'center', photoW: 1, cover: 'normal', titleScale: 0.92, bodyScale: 0.9 },
-  banner: { columns: 1, photo: 'banner', photoW: 1, cover: 'normal', titleScale: 1 },
-  newspaper: { columns: 3, photo: 'top', photoW: 1, cover: 'normal', titleScale: 1.18, bodyScale: 0.9 },
-  timeline: { columns: 1, photo: 'right', photoW: 0.38, cover: 'normal', titleScale: 1, timeline: true },
-  quote: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, quote: true },
-  card: { columns: 1, photo: 'card', photoW: 1, cover: 'normal', titleScale: 1 },
-  sidebar: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, sidebar: true },
-  fullbleed: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'fullbleed', titleScale: 1.1 },
+  // headerCover: 第 1 頁是否在標題下畫整頁寬主圖。false 時主圖改插入內文，依該版型的照片模式排列。
+  classic: { columns: 1, photo: 'center', photoW: 1, cover: 'normal', titleScale: 1, headerCover: true },
+  alternate: { columns: 1, photo: 'alternate', photoW: 0.52, cover: 'normal', titleScale: 1, headerCover: false },
+  columns: { columns: 2, photo: 'center', photoW: 1, cover: 'normal', titleScale: 1, headerCover: true },
+  magazine: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'hero', titleScale: 1.08, headerCover: true },
+  wrap2: { columns: 2, photo: 'alternate', photoW: 0.58, cover: 'normal', titleScale: 1, headerCover: false },
+  collage: { columns: 1, photo: 'grid', photoW: 0.5, cover: 'normal', titleScale: 1, headerCover: false },
+  tri: { columns: 3, photo: 'center', photoW: 1, cover: 'normal', titleScale: 0.92, bodyScale: 0.9, headerCover: true },
+  banner: { columns: 1, photo: 'banner', photoW: 1, cover: 'normal', titleScale: 1, headerCover: false },
+  newspaper: { columns: 3, photo: 'top', photoW: 1, cover: 'normal', titleScale: 1.18, bodyScale: 0.9, headerCover: true },
+  timeline: { columns: 1, photo: 'right', photoW: 0.38, cover: 'normal', titleScale: 1, timeline: true, headerCover: false },
+  quote: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, quote: true, headerCover: false },
+  card: { columns: 1, photo: 'card', photoW: 1, cover: 'normal', titleScale: 1, headerCover: false },
+  sidebar: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'normal', titleScale: 1, sidebar: true, headerCover: false },
+  fullbleed: { columns: 1, photo: 'alternate', photoW: 0.5, cover: 'fullbleed', titleScale: 1.1, headerCover: true },
 };
+
+/** 可選版型以 LAYOUTS 為準。後端清單只用來忽略前端尚不認識的 id，不會因舊版只有三種而縮減選項。 */
+export function selectableLayoutIds(backendLayouts) {
+  // 以 LAYOUTS 為準。後端清單只用來過濾不認得的 id，不會拿舊的三種清單縮減選項。
+  const ids = LAYOUTS.map((l) => l.id);
+  const known = new Set(ids);
+  if (Array.isArray(backendLayouts)) backendLayouts.filter((id) => known.has(id));
+  return ids;
+}
+
+function usesHeaderCover(spec) {
+  return !!(spec && spec.headerCover) || spec.cover === 'fullbleed' || spec.cover === 'hero';
+}
+
+/** 不畫整寬主圖的版型：把 cover 插入內文，依該版型的照片模式排在第 1 頁。 */
+function insertInlineCover(list, cover, spec) {
+  if (!cover || !cover.photoId) return;
+  if (list.some((b) => b.type === 'figure' && b.photoId === cover.photoId)) return;
+  const fig = { type: 'figure', photoId: cover.photoId, caption: cover.caption || '' };
+  const afterPara = spec.photo === 'banner' || spec.photo === 'grid';
+  const i = list.findIndex((b) => b.type === 'para');
+  if (i >= 0) list.splice(afterPara ? i + 1 : i, 0, fig);
+  else list.unshift(fig);
+}
 
 
 function specFor(id) { return LAYOUT_SPECS[id] || LAYOUT_SPECS.classic; }
@@ -164,7 +189,7 @@ function buildHeader(page, data, metaLine, cover, spec, s, measure, imageSize, i
   y += 30 * s;
   if (cover) {
     const sz = sizeOf(imageSize, cover.photoId);
-    const h = Math.min((CW * sz.h) / sz.w, (spec.cover === 'hero' ? 780 : 640) * s);
+    const h = spec.cover === 'hero' ? 900 * s : Math.min((CW * sz.h) / sz.w, 640 * s);
     page.frames.push({ id: hid('image'), type: 'image', x: MARGIN, y: y, w: CW, h: h, locked: false, photoId: cover.photoId, fit: 'cover' });
     page.ops.push({ op: 'image', photoId: cover.photoId, x: MARGIN, y: y, w: CW, h: h, fit: 'cover', radius: 8 });
     y += h + 12 * s;
@@ -235,9 +260,12 @@ function jumpPastObstacles(st, lh) {
 
 function flowPara(st, b, idx) {
   const s = st.s;
-  const lh = st.bodyLH;
-  const size = st.bodySize;
-  const fnt = st.bf;
+  const quoteLead = !!st.spec.quote && !st.quoteLeadDone;
+  if (quoteLead) st.quoteLeadDone = true;
+  const size = quoteLead ? st.bodySize * 1.22 : st.bodySize;
+  const lh = quoteLead ? size * 1.7 : st.bodyLH;
+  const fnt = quoteLead ? font(size, 500) : st.bf;
+  const color = quoteLead ? COLORS.navy : COLORS.text;
   const tokens = String(b.text ?? '').match(TOKEN_RE) || [];
   let ti = 0;
   let line = '';
@@ -253,7 +281,7 @@ function flowPara(st, b, idx) {
   const emitLine = () => {
     const seg = currentSeg(st, lh);
     if (!seg) return false;
-    st.page.ops.push({ op: 'text', x: seg.x, y: st.y + (lh + size * 0.72) / 2, text: line, font: fnt, color: COLORS.text });
+    st.page.ops.push({ op: 'text', x: seg.x, y: st.y + (lh + size * 0.72) / 2, text: line, font: fnt, color });
     st.y += lh;
     chunkLines++;
     line = '';
@@ -431,7 +459,7 @@ function placeFigure(st, b, idx) {
   let ix = col.x;
   let iy = st.y;
   if (isBanner) {
-    w = colW; h = Math.min((w * sz.h) / sz.w, 360 * s); ix = col.x; iy = st.y;
+    w = colW; h = Math.min((w * sz.h) / sz.w, 220 * s); ix = col.x; iy = st.y;
   } else if (isCard) {
     w = colW - 32 * s; h = Math.min((w * sz.h) / sz.w, 420 * s); ix = col.x + 16 * s; iy = st.y;
   } else if (isWrap) {
@@ -464,7 +492,7 @@ function placeFigure(st, b, idx) {
     col = colRect(st);
     iy = st.y;
     const cw = col.w;
-    if (isBanner) { w = cw; h = Math.min((w * sz.h) / sz.w, 360 * s); ix = col.x; }
+    if (isBanner) { w = cw; h = Math.min((w * sz.h) / sz.w, 220 * s); ix = col.x; }
     else if (isCard) { w = cw - 32 * s; h = Math.min((w * sz.h) / sz.w, 420 * s); ix = col.x + 16 * s; }
     else if (isWrap) {
       const left = mode === 'right' ? false : (st.figIndex % 2 === 0);
@@ -619,6 +647,8 @@ export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', sc
   const imgSize = imageSize || (() => ({ w: 4, h: 3 }));
   const d = data || {};
   const list = Array.isArray(blocks) ? blocks.map((b) => ({ ...b })) : [];
+  const headerCover = usesHeaderCover(spec);
+  if (header && !headerCover) insertInlineCover(list, cover, spec);
   const bodySize = (spec.columns === 3 ? 24 : 27) * s * (spec.bodyScale || 1);
   const bodyLH = bodySize * 1.8;
   const bf = font(bodySize);
@@ -630,7 +660,7 @@ export function layoutA4({ data, metaLine, cover, blocks, layout = 'classic', sc
     const isFirst = pageIndex === 0;
     const page = { index: pageIndex, frames: [], ops: [] };
     pages.push(page);
-    const yAfter = buildHeader(page, d, metaLine || '', cover, spec, s, m, imgSize, header && isFirst, pageIndex);
+    const yAfter = buildHeader(page, d, metaLine || '', headerCover ? cover : null, spec, s, m, imgSize, header && isFirst, pageIndex);
     const geom = geometryFor(spec, yAfter);
     if (spec.sidebar) {
       const sbY = yAfter;
