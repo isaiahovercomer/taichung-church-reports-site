@@ -5,17 +5,17 @@
 //   #/a/<id>[/materials|generate|outputs|members|settings]  行動報導協作頁（members／settings 只給負責人）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=dd011ae41b';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=dd011ae41b';
-import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=dd011ae41b';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=dd011ae41b';
-import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=dd011ae41b';
-import { buildPdf } from '../report/pdf.mjs?v=dd011ae41b';
-import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=dd011ae41b';
-import { createTour } from './tour.mjs?v=dd011ae41b';
-import { createPhotoLoader } from './photos.mjs?v=dd011ae41b';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=dd011ae41b';
-import { createSnapshot } from './snapshot.mjs?v=dd011ae41b';
+import { ApiError, createApi, detectMode } from './api.mjs?v=77d9d35e1f';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=77d9d35e1f';
+import { blocksToMarkdown, composeReport } from '../report/compose.mjs?v=77d9d35e1f';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=77d9d35e1f';
+import { canvasToJpegBytes, renderA4 } from '../report/a4.mjs?v=77d9d35e1f';
+import { buildPdf } from '../report/pdf.mjs?v=77d9d35e1f';
+import { createMarkdown, formatDateRange, renderStandalone } from '../render.mjs?v=77d9d35e1f';
+import { createTour } from './tour.mjs?v=77d9d35e1f';
+import { createPhotoLoader } from './photos.mjs?v=77d9d35e1f';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=77d9d35e1f';
+import { createSnapshot } from './snapshot.mjs?v=77d9d35e1f';
 
 const root = document.getElementById('app');
 const config = JSON.parse(root.dataset.config || '{}');
@@ -171,7 +171,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=dd011ae41b', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=77d9d35e1f', import.meta.url))).text();
   return cssText;
 }
 
@@ -494,41 +494,125 @@ async function renderHome() {
     fill(view, h('p', { class: 'errors', role: 'alert', text: errorText(e) }));
   }
 }
+// 總管理者的選取模式（首頁「選取」→ 勾選／全選 →「刪除所選」）；背景更新重畫時保留
+const homeSelect = { on: false, ids: new Set() };
+
 function drawHome(list) {
   const isSuper = state.me.role === 'super';
+  if (!isSuper) homeSelect.on = false;
+  // 已不在列表上的就不算選取
+  const known = new Set(list.map((a) => a.id));
+  for (const id of [...homeSelect.ids]) if (!known.has(id)) homeSelect.ids.delete(id);
+  const selecting = isSuper && homeSelect.on && list.length > 0;
+  const redraw = () => drawHome(state.home?.list || list);
+
+  const cardText = (a) =>
+    h(
+      'span',
+      { class: 'card-text' },
+      h('span', { class: 'card-cat', text: ROLE_LABEL[a.myRole] || '' }),
+      h('h2', { class: 'card-title', text: a.name }),
+      h('span', { class: 'card-date', text: `${formatDateRange(a.date, a.endDate)}${a.place ? `｜${a.place}` : ''}` }),
+      // 總管理者選取時多顯示負責人，方便分辨同名的行動
+      selecting && a.owners && a.owners.length ? h('span', { class: 'card-owner hint', text: `負責人：${a.owners.join('、')}` }) : null,
+    );
+  const card = (a) =>
+    selecting
+      ? h(
+          'label',
+          { class: `card action-card selectable${homeSelect.ids.has(a.id) ? ' selected' : ''}`, 'data-action': a.id },
+          h('input', {
+            type: 'checkbox',
+            class: 'select-box',
+            name: 'select-action',
+            value: a.id,
+            checked: homeSelect.ids.has(a.id),
+            'aria-label': `選取「${a.name}」`,
+            onchange: (ev) => {
+              if (ev.target.checked) homeSelect.ids.add(a.id);
+              else homeSelect.ids.delete(a.id);
+              redraw();
+            },
+          }),
+          cardText(a),
+        )
+      : h(
+          'a',
+          {
+            class: 'card action-card',
+            href: `#/a/${a.id}`,
+            // 先載入：手指一碰到、滑鼠移上去或用鍵盤選到就開始拿資料，點下去時多半已經好了
+            onpointerenter: () => prefetchAction(a.id),
+            ontouchstart: () => prefetchAction(a.id),
+            onfocus: () => prefetchAction(a.id),
+          },
+          cardText(a),
+        );
+
+  const n = homeSelect.ids.size;
+  const allOn = n > 0 && n === list.length;
+  const toolbar = selecting
+    ? h(
+        'div',
+        { class: 'select-toolbar', 'data-testid': 'select-toolbar' },
+        h(
+          'label',
+          { class: 'checkbox select-all' },
+          h('input', {
+            type: 'checkbox',
+            name: 'select-all',
+            checked: allOn,
+            onchange: (ev) => {
+              homeSelect.ids = ev.target.checked ? new Set(list.map((a) => a.id)) : new Set();
+              redraw();
+            },
+          }),
+          h('span', { text: '全選' }),
+        ),
+        h('span', { class: 'select-count', 'data-testid': 'select-count', text: `已選 ${n} 個` }),
+        h('button', { type: 'button', class: 'btn danger', 'data-testid': 'delete-selected', disabled: n === 0, text: '刪除所選', onclick: () => deleteSelected(list) }),
+        h('button', {
+          type: 'button',
+          class: 'btn',
+          text: '完成',
+          onclick: () => {
+            homeSelect.on = false;
+            homeSelect.ids.clear();
+            redraw();
+          },
+        }),
+      )
+    : null;
+
   fill(view,
     h(
       'div',
       { class: 'section-head' },
-      h('h1', { class: 'page-title', text: '我的行動' }),
-      h('span', { class: 'actions' }, h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' }), isSuper ? h('a', { class: 'btn', href: '#/admin', text: '總管理者名單' }) : null),
+      h('h1', { class: 'page-title', text: isSuper ? '所有行動' : '我的行動' }),
+      h(
+        'span',
+        { class: 'actions' },
+        h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' }),
+        isSuper && list.length && !selecting
+          ? h('button', {
+              type: 'button',
+              class: 'btn',
+              'data-testid': 'select-mode',
+              text: '選取',
+              onclick: () => {
+                homeSelect.on = true;
+                homeSelect.ids.clear();
+                redraw();
+              },
+            })
+          : null,
+        isSuper ? h('a', { class: 'btn', href: '#/admin', text: '總管理者名單' }) : null,
+      ),
     ),
     h('hr', { class: 'hairline' }),
+    toolbar,
     list.length
-      ? h(
-          'div',
-          { class: 'card-grid action-list', 'data-testid': 'action-list' },
-          list.map((a) =>
-            h(
-              'a',
-              {
-                class: 'card action-card',
-                href: `#/a/${a.id}`,
-                // 先載入：手指一碰到、滑鼠移上去或用鍵盤選到就開始拿資料，點下去時多半已經好了
-                onpointerenter: () => prefetchAction(a.id),
-                ontouchstart: () => prefetchAction(a.id),
-                onfocus: () => prefetchAction(a.id),
-              },
-              h(
-                'span',
-                { class: 'card-text' },
-                h('span', { class: 'card-cat', text: ROLE_LABEL[a.myRole] || '' }),
-                h('h2', { class: 'card-title', text: a.name }),
-                h('span', { class: 'card-date', text: `${formatDateRange(a.date, a.endDate)}${a.place ? `｜${a.place}` : ''}` }),
-              ),
-            ),
-          ),
-        )
+      ? h('div', { class: `card-grid action-list${selecting ? ' selecting' : ''}`, 'data-testid': 'action-list' }, list.map(card))
       : h(
           'div',
           { class: 'empty', 'data-testid': 'empty-actions' },
@@ -537,6 +621,57 @@ function drawHome(list) {
           h('p', {}, h('a', { class: 'btn primary', href: '#/new', text: '建立新行動' })),
         ),
   );
+}
+
+/** 刪除所選的行動（總管理者）：列出名稱、輸入「刪除」確認；資料夾移到雲端硬碟垃圾桶 */
+async function deleteSelected(list) {
+  const picked = list.filter((a) => homeSelect.ids.has(a.id));
+  if (!picked.length) return;
+  const names = picked.slice(0, 10).map((a) => `・${a.name}（${formatDateRange(a.date, a.endDate)}）`);
+  if (picked.length > 10) names.push(`…還有 ${picked.length - 10} 個`);
+  const typed = prompt(
+    `要刪除這 ${picked.length} 個行動嗎？\n\n${names.join('\n')}\n\n素材、照片、錄音會一起刪除；雲端硬碟中的資料夾會移到垃圾桶，30 天內可以救回。\n請輸入「刪除」兩個字確認：`,
+  );
+  if (typed == null) return;
+  if (typed.trim() !== '刪除') {
+    setStatus('沒有輸入「刪除」，已取消', 'error');
+    return;
+  }
+  const ids = picked.map((a) => a.id);
+  setStatus(`刪除 ${ids.length} 個行動中…`);
+  let deleted = [];
+  let failed = [];
+  try {
+    const r = await api.call('actions.deleteMany', { ids, confirmCount: ids.length });
+    deleted = r.deleted;
+    failed = r.failed;
+  } catch (e) {
+    if (!isUnsupported(e)) {
+      setStatus(errorText(e), 'error');
+      return;
+    }
+    // 後端還是舊版：一個一個刪
+    for (const a of picked) {
+      try {
+        await api.call('actions.delete', { id: a.id, confirmName: a.name });
+        deleted.push(a.id);
+      } catch (err) {
+        failed.push({ id: a.id, error: errorText(err) });
+      }
+    }
+  }
+  const gone = new Set(deleted);
+  for (const id of gone) {
+    state.actions.delete(id);
+    homeSelect.ids.delete(id);
+  }
+  if (state.home) state.home.list = state.home.list.filter((a) => !gone.has(a.id));
+  saveSnapshot();
+  if (!homeSelect.ids.size) homeSelect.on = false;
+  drawHome(state.home?.list || []);
+  const nameOf = (id) => list.find((a) => a.id === id)?.name || id;
+  if (failed.length) setStatus(`已刪除 ${deleted.length} 個；${failed.length} 個沒有刪除：${failed.map((f) => `${nameOf(f.id)}（${f.error}）`).join('、')}`, 'error');
+  else setStatus(`已刪除 ${deleted.length} 個行動`);
 }
 
 // ---------- 報導設定控制項 ----------

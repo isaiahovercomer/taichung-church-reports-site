@@ -26,9 +26,10 @@ var RptCore = (function () {
 
   // ---------- 常數 ----------
   // version 3：合併查詢加速（boot／action.open／photos.getMany）、協作者姓名與常用聯絡人、行動錄音逐字稿（OpenAI）
+  // version 6：總管理者批次刪除行動（actions.deleteMany）
   // version 5：登入時回傳首頁資料（auth.verifyCode withBoot）
   // version 4：行動日期區間（endDate）、防重複建立（requestId、同名同日合併）、刪除行動（actions.delete）
-  var RPT_VERSION_ = 5;
+  var RPT_VERSION_ = 6;
   var RPT_ADMIN_SEED_EMAILS_ = ['isaiah.overcomer@gmail.com'];
   var RPT_MAIL_SUBJECT_ = '台中市召會行動報導協作平台 登入驗證碼';
   var RPT_MAIL_SENDER_NAME_ = '台中市召會行動報導協作平台';
@@ -898,6 +899,42 @@ var RptCore = (function () {
       env.store.deleteAction(a.id);
     });
     return { deleted: true, id: a.id };
+  }
+  /**
+   * 總管理者一次刪除多個行動（首頁「選取」→「刪除所選」）。
+   * 防誤刪：confirmCount 要等於要刪的數量；每個行動的 Drive 資料夾移到垃圾桶（30 天可救回）。
+   * 個別失敗（例如已被別人刪掉）不影響其他，回傳哪些刪了、哪些沒刪。
+   */
+  function deleteManyActions_(env, ctx, data) {
+    requireSuper_(ctx);
+    data = data || {};
+    var ids = data.ids;
+    if (Object.prototype.toString.call(ids) !== '[object Array]' || !ids.length) fail_('BAD_INPUT', '請選取要刪除的行動');
+    if (ids.length > 100) fail_('BAD_INPUT', '一次最多刪除 100 個行動');
+    var clean = [];
+    for (var i = 0; i < ids.length; i++) {
+      var id = id_(ids[i], '行動 id');
+      if (!arrayIncludes_(clean, id)) clean.push(id);
+    }
+    if (Number(data.confirmCount) !== clean.length) fail_('BAD_INPUT', '確認的數量不符，請重新選取後再刪除');
+    var deleted = [];
+    var failed = [];
+    env.withLock(function () {
+      for (var k = 0; k < clean.length; k++) {
+        var a = env.store.getAction(clean[k]);
+        if (!a) {
+          failed.push({ id: clean[k], error: '找不到這個行動（可能已經刪除）' });
+          continue;
+        }
+        try {
+          env.store.deleteAction(a.id);
+          deleted.push(a.id);
+        } catch (e) {
+          failed.push({ id: a.id, error: sanitizeError(e && e.message ? e.message : e) });
+        }
+      }
+    });
+    return { deleted: deleted, failed: failed };
   }
   function updateAction_(env, ctx, data) {
     var a = loadAction_(env, ctx, data && data.id);
@@ -1902,6 +1939,7 @@ var RptCore = (function () {
     // version 3
     boot: boot_,
     'actions.delete': deleteAction_,
+    'actions.deleteMany': deleteManyActions_,
     'action.open': openAction_,
     'photos.getMany': getPhotos_,
     'contacts.list': listContacts_,

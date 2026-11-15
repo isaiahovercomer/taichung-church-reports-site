@@ -1882,3 +1882,60 @@ button[aria-busy='true'] {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
+
+/* 總管理者選取模式 */
+.select-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.select-toolbar .select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.select-count {
+  font-size: 14px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+
+.action-card.selectable {
+  position: relative;
+  cursor: pointer;
+  padding-left: 44px;
+}
+
+.action-card.selectable .select-box {
+  position: absolute;
+  left: 16px;
+  top: 22px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--navy, #1f2d4a);
+}
+
+.action-card.selected {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px var(--gold-light) inset;
+}
+
+.card-owner {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
