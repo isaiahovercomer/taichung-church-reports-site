@@ -2,9 +2,9 @@
 // 字級最低 90%，不再縮到 81%。真的塞不下就再減照片，並在最後加「全文見網頁版」。
 // A4／PDF 完全不放影片（不放封面、不放 QR 碼），只有文字和照片；網頁版才有影片。
 
-import { A4, COLORS, FONT_FAMILY, font, layoutA4, MIN_BODY_PX, BODY_PX, DEFAULT_FOCUS_X, DEFAULT_FOCUS_Y, pageFillRatio } from './a4-layout.mjs?v=df37e48a51';
-import { LOGO_DATA_URL } from '../brand.mjs?v=df37e48a51';
-import { getTheme, drawPattern } from './themes.mjs?v=df37e48a51';
+import { A4, COLORS, FONT_FAMILY, font, layoutA4, MIN_BODY_PX, BODY_PX, DEFAULT_FOCUS_X, DEFAULT_FOCUS_Y, pageFillRatio } from './a4-layout.mjs?v=35d0871306';
+import { LOGO_DATA_URL } from '../brand.mjs?v=35d0871306';
+import { getTheme, drawPattern } from './themes.mjs?v=35d0871306';
 
 
 function themePalette(theme) {

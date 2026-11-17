@@ -6,21 +6,21 @@
 //   #/r/<id>      已發佈的公開報導（免登入，sandbox iframe）
 // 所有畫面用 DOM API 建立（textContent），不使用 innerHTML。
 
-import { ApiError, createApi, detectMode } from './api.mjs?v=df37e48a51';
-import { captureVideoFrame, resizePhoto } from './media.mjs?v=df37e48a51';
-import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=df37e48a51';
-import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=df37e48a51';
-import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=df37e48a51';
-import { mountA4Editor } from '../report/a4-editor.mjs?v=df37e48a51';
-import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=df37e48a51';
-import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=df37e48a51';
-import { buildPdf } from '../report/pdf.mjs?v=df37e48a51';
-import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=df37e48a51';
-import { createTour } from './tour.mjs?v=df37e48a51';
-import { helpView } from './help.mjs?v=df37e48a51';
-import { createPhotoLoader } from './photos.mjs?v=df37e48a51';
-import { renderRecordings, rulesEditor } from './recordings.mjs?v=df37e48a51';
-import { createSnapshot } from './snapshot.mjs?v=df37e48a51';
+import { ApiError, createApi, detectMode } from './api.mjs?v=35d0871306';
+import { captureVideoFrame, resizePhoto } from './media.mjs?v=35d0871306';
+import { blocksToMarkdown, composeReport, groupByUnit } from '../report/compose.mjs?v=35d0871306';
+import { createSummarizer, ruleBasedSummarizer } from '../report/summarizer.mjs?v=35d0871306';
+import { canvasToJpegBytes, drawA4Ops, renderA4, renderA4Plan } from '../report/a4.mjs?v=35d0871306';
+import { mountA4Editor } from '../report/a4-editor.mjs?v=35d0871306';
+import { LAYOUTS, formatMetaLine, pageFillRatio, previewLayout, selectableLayoutIds } from '../report/a4-layout.mjs?v=35d0871306';
+import { THEMES, DEFAULT_THEME_ID, getTheme, isThemeId, themeThumbStyle } from '../report/themes.mjs?v=35d0871306';
+import { buildPdf } from '../report/pdf.mjs?v=35d0871306';
+import { createMarkdown, formatDate, formatDateRange, renderStandalone } from '../render.mjs?v=35d0871306';
+import { createTour } from './tour.mjs?v=35d0871306';
+import { helpView } from './help.mjs?v=35d0871306';
+import { createPhotoLoader } from './photos.mjs?v=35d0871306';
+import { renderRecordings, rulesEditor } from './recordings.mjs?v=35d0871306';
+import { createSnapshot } from './snapshot.mjs?v=35d0871306';
 
 const layoutNames = Object.fromEntries(LAYOUTS.map((l) => [l.id, l.name]));
 const THEME_KEY = 'rpt.report-theme';
@@ -190,7 +190,7 @@ const go = (hash) => {
 };
 
 async function getCss() {
-  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=df37e48a51', import.meta.url))).text();
+  if (cssText == null) cssText = await (await fetch(new URL('../styles.css?v=35d0871306', import.meta.url))).text();
   return cssText;
 }
 
@@ -1757,15 +1757,59 @@ const MANAGER_TABS = [
   ['members', '協作者'],
   ['settings', '行動設定'],
 ];
+/** 分頁圖示（線條風格，不用十字架） */
+const TAB_ICONS = {
+  materials:
+    '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  generate:
+    '<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>',
+  outputs:
+    '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  members:
+    '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  settings:
+    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+};
+function tabIcon(inner) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'tab-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  svg.innerHTML = inner;
+  return svg;
+}
+function actionTabBar(actionId, tab, tabs) {
+  return h(
+    'nav',
+    { class: 'app-tabs', role: 'tablist', 'aria-label': '行動功能' },
+    tabs.map(([key, label]) =>
+      h(
+        'a',
+        { role: 'tab', class: 'tab', href: `#/a/${actionId}/${key}`, 'aria-selected': String(key === tab), 'data-tab': key },
+        tabIcon(TAB_ICONS[key]),
+        h('span', { class: 'tab-label', text: label }),
+      ),
+    ),
+  );
+}
+function revealActiveTab(root) {
+  root?.querySelector('.app-tabs .tab[aria-selected="true"]')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+}
 /** 載入中的行動頁外框：用首頁列表已有的資料先顯示 */
 function actionShell(a, tab) {
   const tabs = a.myRole === 'manager' ? [...ACTION_TABS, ...MANAGER_TABS] : ACTION_TABS;
   return [
     h('nav', { class: 'breadcrumb', 'aria-label': '麵包屑' }, h('a', { href: '#/', text: '我的行動' }), h('span', { class: 'sep', 'aria-hidden': 'true', text: '›' }), h('span', { text: a.name })),
+    actionTabBar(a.id, tab, tabs),
     a.place ? h('p', { class: 'kicker', text: a.place }) : null,
     h('h1', { class: 'article-title', text: a.name }),
     h('dl', { class: 'meta' }, h('div', { class: 'meta-item' }, h('dt', { text: '日期' }), h('dd', { text: formatDateRange(a.date, a.endDate) })), a.place ? h('div', { class: 'meta-item' }, h('dt', { text: '地點' }), h('dd', { text: a.place })) : null),
-    h('div', { class: 'app-tabs', role: 'tablist' }, tabs.map(([key, label]) => h('a', { role: 'tab', class: 'tab', href: `#/a/${a.id}/${key}`, 'aria-selected': String(key === tab), 'data-tab': key, text: label }))),
     h('div', { class: 'tab-panel', 'aria-busy': 'true', 'data-testid': 'action-loading' }, h('div', { class: 'skeleton' }), h('div', { class: 'skeleton short' }), h('p', { class: 'hint', text: '載入素材中…' })),
   ].filter(Boolean);
 }
@@ -1848,6 +1892,7 @@ async function renderAction(id, tab, { force = false } = {}) {
       : null;
   fill(view, 
     h('nav', { class: 'breadcrumb', 'aria-label': '麵包屑' }, h('a', { href: '#/', text: '我的行動' }), h('span', { class: 'sep', 'aria-hidden': 'true', text: '›' }), h('span', { text: action.name })),
+    actionTabBar(id, tab, tabs),
     action.place ? h('p', { class: 'kicker', text: action.place }) : null,
     h('h1', { class: 'article-title', text: action.name }),
     h(
@@ -1861,13 +1906,9 @@ async function renderAction(id, tab, { force = false } = {}) {
     ),
     action.description ? h('p', { class: 'action-desc', text: action.description }) : null,
     leaveBtn,
-    h(
-      'div',
-      { class: 'app-tabs', role: 'tablist' },
-      tabs.map(([key, label]) => h('a', { role: 'tab', class: 'tab', href: `#/a/${id}/${key}`, 'aria-selected': String(key === tab), 'data-tab': key, text: label })),
-    ),
     panel,
   );
+  revealActiveTab(view);
   const reload = () => {
     invalidate();
     return renderAction(id, tab, { force: true });
